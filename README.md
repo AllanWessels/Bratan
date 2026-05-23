@@ -155,6 +155,8 @@ tweaker.
    commits, one per change, with rationale in `pipeline/CHANGELOG.md`.
 
 **Skills used (typically one or two per invocation):**
+
+*Pipeline-shape skills* — when the Blue Team is deciding **what to change**:
 - [`rag-architect`](skills/rag-architect/SKILL.md) — high-level pipeline
   design and stage trade-offs
 - [`hybrid-retrieval`](skills/hybrid-retrieval/SKILL.md) — BM25 + vector + RRF
@@ -163,6 +165,33 @@ tweaker.
   contextual-retrieval idea)
 - [`citation-verification`](skills/citation-verification/SKILL.md) —
   post-generation pass to catch invented citations
+- [`failure-clustering`](skills/failure-clustering/SKILL.md) — diagnose
+  *which* layer to change before deciding *what* to change
+
+*Optimization-method skills* — when the Blue Team is deciding **how to
+search the space of changes**:
+- [`ablation`](skills/ablation/SKILL.md) — disable one stage at a time
+  to attribute contribution. The first move for any mature pipeline,
+  because stages accumulate and not all of them are still earning their
+  keep on your corpus.
+- [`grid-sweep`](skills/grid-sweep/SKILL.md) — exhaustive enumeration
+  over 1–2 low-cardinality axes. Simpler than BO; surfaces the response
+  shape, not just the optimum.
+- [`bayesian-optimization`](skills/bayesian-optimization/SKILL.md) —
+  sample-efficient search for 1–5 numeric parameters when the eval is
+  expensive (TPE via Optuna by default). 10× fewer trials than random
+  search; matters when each trial is N Sonnet 4 calls.
+- [`particle-swarm`](skills/particle-swarm/SKILL.md) — for mixed
+  continuous + discrete + categorical spaces with a rough response
+  surface (e.g., when the embedding model is itself a tuning axis).
+  Population-based, robust to discontinuities BO can't see across.
+
+These compose: **ablate** first to factor the problem and identify which
+parameters matter; **grid** to bound the productive region; then **BO**
+or **PSO** inside that region depending on smoothness. Every search
+runs the inner-loop trials on the local **prejudge** for cost
+efficiency, then **oracle-validates** the winner with Sonnet 4 before
+persisting the change to `pipeline/config.yaml`.
 
 Skills are accumulative. When the Blue Team discovers a new technique
 works, it authors a new `SKILL.md` and future iterations can reach for it.
@@ -332,12 +361,18 @@ bratan.config.yaml    user-owned project config (setup wizard writes this)
   judge/AGENTS.md
 /agents/judge/prompts/   fixed grading prompts (humans edit, never agents)
 /skills/              SKILL.md per technique — read on demand
-  rag-architect/             high-level pipeline design
-  hybrid-retrieval/          BM25 + vector + RRF
-  contextual-chunk-enrichment/   Anthropic's contextual-retrieval idea
-  failure-clustering/        diagnostic matrix for picking the right fix layer
+  # pipeline-shape skills (what to change)
+  rag-architect/                  high-level pipeline design
+  hybrid-retrieval/               BM25 + vector + RRF
+  contextual-chunk-enrichment/    Anthropic's contextual-retrieval idea
+  failure-clustering/             diagnose which layer to change
   synthetic-question-generation/  adversarial test-case strategies
-  citation-verification/     post-hoc grounding check
+  citation-verification/          post-hoc grounding check
+  # optimization-method skills (how to search the space of changes)
+  ablation/                       attribute each stage's contribution
+  grid-sweep/                     enumerate small Cartesian products
+  bayesian-optimization/          sample-efficient search via TPE / GP
+  particle-swarm/                 mixed continuous+discrete spaces
 /pipeline/            blue-team's lane — the artifact being improved
   config.yaml         hyperparameters
   ingest.py           corpus → vector store
