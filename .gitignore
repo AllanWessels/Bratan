@@ -16,6 +16,10 @@ dist/
 .env
 .env.local
 
+# User-owned project config (written by the setup wizard, per-machine state)
+bratan.config.yaml
+.bratan-setup.json
+
 # Vector store
 .chroma/
 *.chroma/
