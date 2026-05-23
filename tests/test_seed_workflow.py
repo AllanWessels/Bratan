@@ -52,7 +52,16 @@ def test_setup_state_when_empty(client) -> None:
 def test_save_step_persists(client, project_tmp) -> None:
     r = client.post(
         "/api/setup/save-step",
-        json={"step": 1, "data": {"project_name": "test", "corpus_path": str(project_tmp / "corpus"), "seed_target_n": 20}},
+        json={
+            "step": 1,
+            "data": {
+                "project": {
+                    "project_name": "test",
+                    "corpus_path": str(project_tmp / "corpus"),
+                    "seed_target_n": 20,
+                }
+            },
+        },
     )
     assert r.status_code == 200, r.text
     cfg = r.json()["config"]
