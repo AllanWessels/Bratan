@@ -33,6 +33,8 @@ ui/frontend/node_modules/
 ui/frontend/dist/
 ui/frontend/.vite/
 ui/frontend/coverage/
+ui/frontend/.tsbuildinfo-node/
+ui/frontend/*.tsbuildinfo
 ui/backend/.cache/
 
 # Caches
