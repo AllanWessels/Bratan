@@ -1,0 +1,89 @@
+[project]
+name = "bratan"
+version = "0.0.1"
+description = "RAG Refiner: a self-improving RAG pipeline driven by red-team / blue-team / judge agents"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Allan Wessels" }]
+
+dependencies = [
+    # web
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "python-multipart>=0.0.12",
+    "websockets>=13.1",
+
+    # vector store (default)
+    "chromadb>=0.5",
+
+    # retrieval + ranking
+    "rank-bm25>=0.2.2",
+
+    # local models
+    "sentence-transformers>=3.3",  # BGE embeddings on GPU
+    "FlagEmbedding>=1.3",          # BGE reranker
+    "torch>=2.4",                  # required by sentence-transformers / FlagEmbedding
+
+    # corpus loaders
+    "pypdf>=5.1",
+    "beautifulsoup4>=4.12",
+    "markdown-it-py>=3.0",
+
+    # LLM clients
+    "anthropic>=0.40",
+    "httpx>=0.27",
+
+    # utilities
+    "pyyaml>=6.0",
+    "python-frontmatter>=1.1",
+    "numpy>=2.0",
+    "tiktoken>=0.8",
+    "rich>=13.9",
+    "typer>=0.13",
+]
+
+[project.optional-dependencies]
+# Local vLLM serving for the prejudge / generation models. Heavy; opt-in.
+gpu = [
+    "vllm>=0.6.4",
+]
+
+# Extra vector DB adapters (shipped in M5).
+qdrant = ["qdrant-client>=1.12"]
+pinecone = ["pinecone>=5.4"]
+weaviate = ["weaviate-client>=4.9"]
+pgvector = ["psycopg[binary]>=3.2", "pgvector>=0.3"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-httpx>=0.34",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "types-PyYAML>=6.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["E501"]  # let the formatter handle line length
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-ra --strict-markers"
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+warn_unused_ignores = true

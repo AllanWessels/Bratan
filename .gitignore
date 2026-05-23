@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+env/
+*.egg-info/
+.eggs/
+build/
+dist/
+*.pyc
+
+# Env
+.env
+.env.local
+
+# Vector store
+.chroma/
+*.chroma/
+*.sqlite3
+
+# Reports (history kept in git, but transient lock/wip files ignored)
+reports/*.lock
+reports/.wip/
+
+# Generated test cases stay in git; ephemeral drafts do not
+test_cases/.drafts/
+
+# UI
+ui/frontend/node_modules/
+ui/frontend/dist/
+ui/frontend/.vite/
+ui/frontend/coverage/
+ui/backend/.cache/
+
+# Caches
+.cache/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Logs
+*.log
+logs/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

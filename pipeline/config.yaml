@@ -1,0 +1,57 @@
+# Pipeline configuration
+# This file is the blue team's primary tuning surface for numeric parameters.
+# Structural changes (adding stages, swapping algorithms) live in query.py.
+
+embedding:
+  provider: voyage
+  model: voyage-3
+  dimension: 1024
+
+generation:
+  provider: anthropic
+  model: claude-sonnet-4-20250514
+  temperature: 0.0
+  max_tokens: 1024
+
+chunking:
+  strategy: recursive  # recursive | fixed | semantic
+  size: 400            # target tokens per chunk
+  overlap: 50          # token overlap between adjacent chunks
+  separators: ["\n\n", "\n", ". ", " "]
+
+retrieval:
+  vector:
+    enabled: true
+    k: 30              # initial vector candidates before rerank
+  bm25:
+    enabled: false     # blue team enables when hybrid is needed
+    k: 30
+  rrf_k: 60            # RRF constant for hybrid merge
+
+reranker:
+  enabled: false       # blue team enables when buried-chunk failures appear
+  provider: cohere
+  model: rerank-3.5
+  top_n: 5             # how many chunks the LLM ultimately sees
+
+query_processing:
+  rewrite: false       # rewrite conversational refs to standalone
+  hyde: false          # hypothetical document embeddings
+  decompose: false     # split multi-hop queries
+
+prompt:
+  template_path: prompts/generation.md
+  require_citations: true
+  citation_format: "[N]"
+
+verification:
+  enabled: false       # post-generation citation verification pass
+  model: claude-sonnet-4-20250514
+  on_failure: downgrade  # retry | downgrade | refuse
+
+vector_store:
+  provider: chromadb
+  path: ./pipeline/chroma_data
+
+corpus:
+  path: ./corpus
