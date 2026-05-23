@@ -1,4 +1,4 @@
-# Resume Here — Project State (last touched 2026-05-23, 15:25 PT)
+# Resume Here — Project State (last touched 2026-05-23, 15:35 PT)
 
 This note exists so the next working session picks up cleanly. Read it
 once, then delete or update it when you reach M2 done.
@@ -12,9 +12,30 @@ contract. End-to-end smoke verified: backend boots, GPU detected (RTX 5080,
 16 GB), config save + seed save both write to disk in the exact shape
 `test_cases/schema.md` requires.
 
-**M2 partial-prep.** Judge grading prompts are pre-authored under
-`agents/judge/prompts/{correctness,faithfulness}.md`. Everything else for
-M2 is still pending.
+**M2 well underway** (commits `M2: judge.py ...` and onward):
+- `pipeline/judge.py` — prejudge/oracle router with deterministic
+  recall@5, JSON-tolerant verdict parser, graceful no-LLM fallback.
+  13 unit tests, all pass.
+- `pipeline/metrics.py` — `build_report()` aggregates verdicts into the
+  full `IterationReport` (composite, per-category, regressions /
+  recoveries, cost, latency p50/p95, manifest hash, drift, judge weights
+  hash, stop_reason). `write_report()` + `append_regressions_md()` +
+  `load_latest()` for persistence.
+- `pipeline/stop_criteria.py` — 7-criterion `evaluate()` returning the
+  `stop_reason` enum (convergence / budget / max_iterations /
+  anchor_regression / judge_drift / blue_stall / manual).
+- `scripts/eval_single.py` — runs one case through the pipeline,
+  scores with oracle (default) or prejudge, human or JSON output.
+  Exit code 0 if composite >= 0.6 else 1 (red team uses this).
+- `scripts/eval.py` — runs all cases (`seed.jsonl` + `generated/*.jsonl`),
+  writes `/reports/run-<ts>.json` + updates `latest.json` + appends
+  `regressions.md`. Supports `--mode {oracle,prejudge}`, `--case-ids`,
+  `--budget-usd`.
+
+Test suite: 30 passing, 1 GPU-skipped.
+
+Judge grading prompts (the human anchors) are at
+`agents/judge/prompts/{correctness,faithfulness}.md`.
 
 The approved plan lives at:
 `/home/allan/.claude/plans/read-all-of-the-cozy-ladybug.md`
@@ -85,37 +106,33 @@ Or to run both together: `make ui`.
   plan said Qwen-32B-AWQ but VRAM is 16 GB on this machine — downsize to
   14B-AWQ.
 
-## What's missing for M2 (smoke loop)
+## What's still missing for M2 (loop closure)
 
-In priority order:
+In priority order — items 1–5 above are done; remaining:
 
-1. **`pipeline/judge.py`** — router with two named functions: `prejudge()`
-   (calls local Qwen via vLLM at T=0) and `oracle_judge()` (calls Sonnet 4
-   at T=0). Both render the prompts under `agents/judge/prompts/`.
-   `judge(case, answer, chunks, mode)` dispatcher.
-2. **`pipeline/metrics.py`** — per-iteration report builder (composite,
-   per_category, pass_rate_at_0_6, regressions, recoveries, cost,
-   latency, pipeline_manifest_hash, test_set_size, drift, stop_reason,
-   judge_weights_hash). Full schema lives in the approved plan's "Metrics
-   reported per iteration" section.
-3. **`pipeline/stop_criteria.py`** — evaluates the 7 stop conditions and
-   returns the `stop_reason` enum (convergence / budget / max_iterations /
-   anchor_regression / judge_drift / blue_stall / manual).
-4. **`scripts/eval_single.py`** — runs `query.answer()` for one case ID,
-   scores with oracle, prints JSON. Red team calls this.
-5. **`scripts/eval.py`** — runs all cases, writes
-   `/reports/run-<ts>.json` + `/reports/latest.json` + appends
-   `/reports/regressions.md`. Supports `--subset` (M3) and
-   `--judge {prejudge,oracle}`.
-6. **`scripts/loop.py`** — flesh out the 51-line stub. Sequence
+1. **`scripts/loop.py`** — flesh out the 51-line stub. Sequence
    red→blue→judge via subprocess `claude --system-prompt
-   @agents/<name>/AGENTS.md`. Convergence + budget gates via
-   `stop_criteria`. Per-iteration commit prefix `loop-iter-<n>:`.
-7. **`pipeline/agent_runner.py`** — subprocess helper + the
-   `bratan.config.yaml` snapshot-and-revert guard.
-8. **`docs/metrics.md`** — full report schema documentation.
-9. **Dashboard view** (frontend) — `routes/Run.tsx` with WebSocket stream
+   @agents/<name>/AGENTS.md`. Consult `stop_criteria.evaluate()` each
+   iteration; per-iteration commit prefix `loop-iter-<n>:`.
+2. **`pipeline/agent_runner.py`** — subprocess helper that runs `claude`
+   in the right CWD with the right AGENTS.md context, captures stdout to
+   `/reports/history/agents/<ts>-<agent>.log`, and snapshot-and-reverts
+   `bratan.config.yaml` after the agent's subprocess exits (the
+   user-owned-config guard).
+3. **`docs/metrics.md`** — full report schema documentation (the schema
+   already exists as `pipeline/metrics.IterationReport`; just needs prose).
+4. **Subset-eval inner loop** — `scripts/eval.py --subset N` selects K
+   most-informative cases for blue-team's inner iterations. Plan says M3.
+5. **Dashboard view** (frontend) — `routes/Run.tsx` with WebSocket stream
    of latest report. M2 ships minimal charts; M5 polishes.
+
+### Quick eval-loop demo (once a vLLM server is up + ANTHROPIC_API_KEY set):
+```bash
+make ui                                      # author ~5 cases via the UI
+uv run python pipeline/ingest.py             # index /corpus/
+uv run python scripts/eval_single.py --case-id <id>
+uv run python scripts/eval.py --iteration 0  # full eval -> /reports/latest.json
+```
 
 ## Known gaps + risks
 
