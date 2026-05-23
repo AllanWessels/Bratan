@@ -49,6 +49,7 @@ format:
 
 test:
 	$(UV) run pytest -q
+	cd ui/frontend && npm test --silent
 
 clean:
 	rm -rf .pytest_cache .ruff_cache .mypy_cache .cache
