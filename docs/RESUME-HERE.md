@@ -1,7 +1,63 @@
-# Resume Here — Project State (last touched 2026-05-23, 15:45 PT)
+# Resume Here — Project State (last touched 2026-05-23, 16:28 PT)
 
-This note exists so the next working session picks up cleanly. Read it
-once, then delete or update it when you reach M2 done.
+Session ended at the user's 16:30 PT hard stop. Pick up tomorrow.
+
+## Honest milestone accounting (against the approved plan)
+
+| Milestone | Status | What's missing |
+|---|---|---|
+| **M0 — bootstrap** | ✅ Done | — |
+| **M1 — wizard + authoring UI + pipeline contracts** | ✅ Done | — |
+| **M2 — smoke loop + live dashboard** | ⚠️ ~85% | Frontend `routes/Run.tsx` + WebSocket stream (live loop dashboard); prose `docs/metrics.md` |
+| **M3 — cost & reliability controls** | ❌ Not started | `pipeline/cache.py` (disk-backed response cache), `eval.py --subset` (informative-case selection), `judge.drift_check()`, `pipeline/budget.py`, `docs/cost-controls.md` |
+| **M4 — optimization-method skills** | ⚠️ Partial | 4 SKILL.md files shipped (ablation, grid-sweep, bayesian-optimization, particle-swarm). `scripts/sweep.py` shared runner still missing. |
+| **M5 — polish + extra adapters + CI** | ❌ Not started | Functional Qdrant / Pinecone / Weaviate / pgvector adapters (today: NotImplementedError stubs); dashboard polish; `docs/architecture.md`; `.github/workflows/ci.yml`; the GPU-skipped seed-workflow integration test |
+
+Roughly **3 of 6 milestones done**, with M2 substantially advanced and
+M4 partially landed. **Bonus over the plan:** a 124-test integration /
+acceptance / unit harness was not in the original plan but was built at
+the user's request.
+
+## Big open item: end-to-end never actually run
+
+The `claude` CLI invocation flags inside `pipeline/agent_runner.py` were
+verified against `claude --help` (v2.1.150), but the full round trip —
+loop spawns claude → agent edits `pipeline/` → commit lands →
+`stop_criteria` halts on convergence — has **not been ridden against a
+real Anthropic key**. First task tomorrow should be a single-iteration
+live run with `--budget-usd 1.0` as a safety net.
+
+## Priority order for tomorrow
+
+1. **Live end-to-end smoke** — author ~5 seed cases in the UI, run
+   `loop.py --iterations 1 --budget-usd 1.0`, watch a real Sonnet 4
+   round trip from red → blue → judge, confirm a report lands.
+2. **`scripts/sweep.py`** — closes M4. ~80 LOC. Reads/writes
+   `pipeline/config.yaml`, defers eval to `eval.py --subset`,
+   oracle-validates the winner. The four skills already expect this
+   interface.
+3. **M3 — `pipeline/cache.py`** — disk-backed response cache keyed by
+   `(model, prompt_hash, temperature)`. Wraps both `query._call_anthropic`
+   and `judge._call_anthropic`. Re-runs become near-free.
+4. **M3 — `eval.py --subset N`** — pick the K most-informative cases
+   (recently flipped or near 0.6) for blue-team's inner iterations.
+5. **M3 — `judge.drift_check()`** — re-score 5 random history pairs.
+   Feed result into the rolling-drift state that `stop_criteria` already
+   reads.
+6. **M2 — live dashboard** — `routes/Run.tsx` + WebSocket stream at
+   `/api/loop/stream`. Plan called for minimal charts here; M5 polishes.
+7. **M5 — at least one additional adapter** — Qdrant is the highest-ROI
+   pick (open-source, popular, has native BM25 for `hybrid_query`).
+8. **M5 — `.github/workflows/ci.yml`** — `uv sync && ruff && pytest`
+   plus `cd ui/frontend && npm test`. The harness is in place; CI
+   should just gate PRs.
+
+## Git state
+
+- 14 commits on `main`, all pushed to
+  `https://github.com/AllanWessels/Bratan.git`.
+- Working tree clean (this RESUME-HERE update is the only diff in
+  flight when you read this).
 
 ## Where the project is
 
