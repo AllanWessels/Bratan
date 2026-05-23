@@ -1,4 +1,4 @@
-# Resume Here — Project State (last touched 2026-05-23, 15:40 PT)
+# Resume Here — Project State (last touched 2026-05-23, 15:45 PT)
 
 This note exists so the next working session picks up cleanly. Read it
 once, then delete or update it when you reach M2 done.
@@ -110,21 +110,24 @@ Or to run both together: `make ui`.
 
 1. **`docs/metrics.md`** — prose for the existing `IterationReport` schema.
    Trivial; just describe what's already in code.
-2. **`claude` CLI invocation in `agent_runner.run_agent()`** — the
-   surrounding plumbing (snapshot guard + log capture + lane semantics)
-   is real and tested. The exact CLI surface for headless agent
-   invocation is the one open piece; today's code uses
-   `claude --print --system-prompt-file ...` as a placeholder. Verify
-   with `claude --help` and adjust the `cmd` list in `run_agent()`.
-3. **Subset-eval inner loop** — `scripts/eval.py --subset N` selects K
+2. **Subset-eval inner loop** — `scripts/eval.py --subset N` selects K
    most-informative cases for blue-team's inner iterations. Plan says M3.
-4. **Response cache** (`pipeline/cache.py`) — M3 per plan.
-5. **Drift check** — `judge.drift_check()` re-scores random history
+3. **Response cache** (`pipeline/cache.py`) — M3 per plan.
+4. **Drift check** — `judge.drift_check()` re-scores random history
    pairs. M3 per plan.
-6. **Dashboard view** — `routes/Run.tsx` + WebSocket stream. Some
+5. **Dashboard view** — `routes/Run.tsx` + WebSocket stream. Some
    minimal charts in M2 per plan; deeper polish in M5.
-7. **Optimization-method skills** — Bayesian / grid-sweep / ablation /
+6. **Optimization-method skills** — Bayesian / grid-sweep / ablation /
    PSO. M4 per plan.
+
+## Git remote
+
+`origin` is set to `https://github.com/AllanWessels/Bratan.git` (empty
+repo as of this session). When ready to publish:
+```bash
+git push -u origin main
+```
+Not pushed yet — that needs the user's explicit OK.
 
 ### Quick demo (once you have ANTHROPIC_API_KEY + ~5 seed cases):
 ```bash

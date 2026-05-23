@@ -81,10 +81,19 @@ def main() -> int:
     for i in range(1, args.iterations + 1):
         logger.info("=== iteration %d / %d ===", i, args.iterations)
 
+        # Budget per-agent: divide the remaining run budget by the agents that
+        # haven't fired yet this iteration (red + blue). The eval has its own
+        # --budget-usd; do not double-charge.
+        agent_budget = None
+        if args.budget_usd is not None:
+            remaining = max(0.0, args.budget_usd - usd_spent)
+            per_iter_share = remaining / max(1, args.iterations - i + 1)
+            agent_budget = per_iter_share / 2.0  # split between red and blue
+
         if not args.no_agents and not args.skip_red:
-            _run_agent_safe("red-team")
+            _run_agent_safe("red-team", cfg, agent_budget)
         if not args.no_agents:
-            _run_agent_safe("blue-team")
+            _run_agent_safe("blue-team", cfg, agent_budget)
             outcome = _commit_pipeline_changes(i)
             blue_outcomes.append(outcome)
 
@@ -116,9 +125,13 @@ def main() -> int:
     return 0
 
 
-def _run_agent_safe(name) -> None:
+def _run_agent_safe(name, cfg, max_budget_usd: float | None) -> None:
     try:
-        run = agent_runner.run_agent(name)
+        run = agent_runner.run_agent(
+            name,
+            model=cfg.models.oracle_model,
+            max_budget_usd=max_budget_usd,
+        )
         logger.info(
             "  agent %s exit=%d duration=%.1fs (log: %s)%s",
             name,

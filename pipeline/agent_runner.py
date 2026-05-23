@@ -8,9 +8,18 @@ Each agent has a system prompt at `agents/<name>/AGENTS.md`. We:
    the user-owned config; this guard makes drift impossible regardless of agent
    behavior.
 
-The actual `claude` subprocess invocation is left as a small focused TODO for the
-session that wires the orchestrator. The snapshot guard + log capture + lane
-enforcement are real and tested in this module.
+`claude` flags chosen (verified against `claude --help` v2.1.150):
+- `-p` / `--print`                       headless, prints once and exits
+- `--system-prompt-file`                 the AGENTS.md for the lane
+- `--bare`                               minimal mode (no hooks/plugins/auto-memory)
+- `--add-dir <PROJECT_ROOT>`             scope filesystem access to the project
+- `--model`                              defaults to Sonnet 4 from bratan.config.yaml
+- `--max-budget-usd`                     enforces a per-agent spend ceiling
+- `--output-format json`                 structured exit for the orchestrator
+- `--dangerously-skip-permissions`       agents run unattended; sandboxed by --add-dir.
+                                          The help text endorses this for sandboxed
+                                          headless runs. We pair it with --add-dir to
+                                          keep the blast radius scoped.
 """
 
 from __future__ import annotations
@@ -99,21 +108,25 @@ def _files_equal(a: Path, b: Path) -> bool:
 # ---------------------------------------------------------------------------
 
 
+_DEFAULT_KICKOFF = "Begin your work as specified in your system prompt."
+
+
 def run_agent(
     name: AgentName,
     *,
+    model: str | None = None,
+    max_budget_usd: float | None = None,
+    kickoff_prompt: str = _DEFAULT_KICKOFF,
     extra_args: list[str] | None = None,
     cwd: Path = PROJECT_ROOT,
     timeout_s: float | None = None,
+    skip_permissions: bool = True,
 ) -> AgentRun:
-    """Invoke `claude` non-interactively with the named agent's AGENTS.md.
+    """Invoke `claude` headlessly with the named agent's AGENTS.md as system prompt.
 
-    NOTE: The exact CLI surface for headless agent invocation is the only
-    decision left for the orchestrator session. Today's stub uses
-    `claude --print --system-prompt-file ...` as a placeholder; verify with
-    the actual `claude --help` output before relying on this path. The
-    snapshot guard + log capture + lane semantics around the invocation are
-    correct and exercised by tests.
+    The CLI surface is verified against `claude --help` (v2.1.150). See module
+    docstring for the chosen flags and rationale. The snapshot guard wraps the
+    subprocess so any unauthorized mutation of the user-owned config is reverted.
     """
     HISTORY_DIR.mkdir(parents=True, exist_ok=True)
     system_prompt_path = PROJECT_ROOT / "agents" / name / "AGENTS.md"
@@ -122,13 +135,27 @@ def run_agent(
 
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     log_path = HISTORY_DIR / f"{stamp}-{name}.log"
-    cmd = [
+    cmd: list[str] = [
         "claude",
-        "--print",
+        "-p",
+        "--bare",
         "--system-prompt-file",
         str(system_prompt_path),
-        *(extra_args or []),
+        "--add-dir",
+        str(PROJECT_ROOT),
+        "--output-format",
+        "json",
     ]
+    if model:
+        cmd.extend(["--model", model])
+    if max_budget_usd is not None:
+        cmd.extend(["--max-budget-usd", str(max_budget_usd)])
+    if skip_permissions:
+        cmd.append("--dangerously-skip-permissions")
+    if extra_args:
+        cmd.extend(extra_args)
+    cmd.append(kickoff_prompt)
+
     started = datetime.now(UTC)
     started_t = started.timestamp()
 
@@ -146,10 +173,7 @@ def run_agent(
             )
             exit_code = proc.returncode
         except FileNotFoundError:
-            log_fh.write(
-                "\n[agent_runner] `claude` CLI not on PATH. "
-                "Headless agent invocation is the open M2 stub.\n"
-            )
+            log_fh.write("\n[agent_runner] `claude` CLI not found on PATH.\n")
             exit_code = 127
         except subprocess.TimeoutExpired:
             log_fh.write(f"\n[agent_runner] timed out after {timeout_s}s\n")
