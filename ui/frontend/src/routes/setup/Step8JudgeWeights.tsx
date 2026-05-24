@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { AlertOctagon } from "lucide-react";
 import { Card } from "@/components/Card";
-import { NumberInput } from "@/components/NumberInput";
+import { Slider } from "@/components/Slider";
 import type { BratanConfig, JudgeWeights } from "@/api/types";
 import { useAutoSaveStep } from "./useAutoSaveStep";
 
@@ -48,45 +48,33 @@ export function Step8JudgeWeights({ config }: Props) {
 
       <Card title="Composite formula weights" description="Defaults are 0.4 / 0.3 / 0.3.">
         <div className="flex flex-col gap-6">
-          <div
-            className={
-              sumValid
-                ? "rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800"
-                : "rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800"
-            }
-          >
-            Sum: <span className="font-mono">{sum.toFixed(2)}</span>{" "}
-            {sumValid ? "(valid)" : "— weights should sum to 1.00"}
-          </div>
-          <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
-            <NumberInput
-              label="Correctness"
-              min={0}
-              max={1}
-              step={0.05}
-              unit="weight"
-              value={data.correctness}
-              onChange={(v) => setData({ ...data, correctness: v })}
-            />
-            <NumberInput
-              label="Recall @ 5"
-              min={0}
-              max={1}
-              step={0.05}
-              unit="weight"
-              value={data.recall_at_5}
-              onChange={(v) => setData({ ...data, recall_at_5: v })}
-            />
-            <NumberInput
-              label="Faithfulness"
-              min={0}
-              max={1}
-              step={0.05}
-              unit="weight"
-              value={data.faithfulness}
-              onChange={(v) => setData({ ...data, faithfulness: v })}
-            />
-          </div>
+          <Slider
+            label="Correctness"
+            min={0}
+            max={1}
+            step={0.05}
+            value={data.correctness}
+            onChange={(v) => setData({ ...data, correctness: v })}
+            format={(v) => v.toFixed(2)}
+          />
+          <Slider
+            label="Recall @ 5"
+            min={0}
+            max={1}
+            step={0.05}
+            value={data.recall_at_5}
+            onChange={(v) => setData({ ...data, recall_at_5: v })}
+            format={(v) => v.toFixed(2)}
+          />
+          <Slider
+            label="Faithfulness"
+            min={0}
+            max={1}
+            step={0.05}
+            value={data.faithfulness}
+            onChange={(v) => setData({ ...data, faithfulness: v })}
+            format={(v) => v.toFixed(2)}
+          />
           <div
             className={
               sumValid
