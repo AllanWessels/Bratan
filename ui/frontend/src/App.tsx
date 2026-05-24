@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { SetupWizard } from "./routes/SetupWizard";
 import { Authoring } from "./routes/Authoring";
 import { Run } from "./routes/Run";
+import { RunReportDetail } from "./routes/RunReportDetail";
 import { Settings } from "./routes/Settings";
 import { NotFound } from "./routes/NotFound";
 import { ToastViewport } from "./components/Toast";
@@ -43,6 +44,7 @@ export default function App() {
         <Route path="/setup/:step" element={<SetupWizard />} />
         <Route path="/authoring" element={<Authoring />} />
         <Route path="/run" element={<Run />} />
+        <Route path="/run/reports/:timestamp" element={<RunReportDetail />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<NotFound />} />
       </Routes>

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type {
   BratanConfig,
@@ -221,8 +221,9 @@ describe("Run", () => {
 
   it("renders the cost meter with usd_spent + the budget cap", () => {
     render(withProviders(<Run />));
-    // usd_spent is 1.25, budget is 5.00
-    expect(screen.getByText(/\$1\.25/)).toBeInTheDocument();
+    // usd_spent is 1.25 (may appear in both cost meter and cost-bars sum),
+    // budget is 5.00.
+    expect(screen.getAllByText(/\$1\.25/).length).toBeGreaterThan(0);
     expect(screen.getByText(/\$5\.00/)).toBeInTheDocument();
   });
 
@@ -389,5 +390,77 @@ describe("Run", () => {
     const rows = screen.getAllByText("case-001");
     expect(rows.length).toBeGreaterThan(0);
     expect(within(rows[0].parentElement as HTMLElement).getByText("0.85")).toBeInTheDocument();
+  });
+
+  it("renders the per-category trend block with one mini-chart per category", () => {
+    // Stream a second full report so multiple iterations are available for trend.
+    const r2 = fakeReport(4, "2026-05-23T13:00:00+00:00", 0.78);
+    mocks.useLoopStream.mockReturnValue({
+      reports: [r2],
+      lastStopReason: null,
+      connected: true,
+    });
+    render(withProviders(<Run />));
+    expect(screen.getByTestId("per-category-trend")).toBeInTheDocument();
+    // Both categories from fakeReport (multi_hop, straightforward) should appear.
+    expect(screen.getByTestId("category-mini-multi_hop")).toBeInTheDocument();
+    expect(screen.getByTestId("category-mini-straightforward")).toBeInTheDocument();
+  });
+
+  it("renders the cost-over-iterations block with one bar per iteration", () => {
+    const r2 = fakeReport(4, "2026-05-23T13:00:00+00:00", 0.78);
+    r2.cost.usd_spent = 2.0;
+    mocks.useLoopStream.mockReturnValue({
+      reports: [r2],
+      lastStopReason: null,
+      connected: true,
+    });
+    render(withProviders(<Run />));
+    const svg = screen.getByTestId("cost-bars-svg");
+    expect(svg).toBeInTheDocument();
+    // Two iterations of full-report data (latest + streamed) -> 2 bars.
+    expect(svg).toHaveAttribute("data-iterations", "2");
+    expect(screen.getAllByTestId("cost-bar")).toHaveLength(2);
+    // Sum: latest (1.25) + r2 (2.0) = 3.25
+    expect(screen.getByText(/\$3\.25/)).toBeInTheDocument();
+  });
+
+  it("renders the drift timeline and highlights red when any value > 5%", () => {
+    const drifty = fakeReport(4, "2026-05-23T13:00:00+00:00", 0.78);
+    drifty.drift.disagreement_rate = 0.07; // > 5%
+    drifty.drift.samples_checked = 20;
+    mocks.useLoopStream.mockReturnValue({
+      reports: [drifty],
+      lastStopReason: null,
+      connected: true,
+    });
+    render(withProviders(<Run />));
+    const svg = screen.getByTestId("drift-svg");
+    expect(svg).toBeInTheDocument();
+    expect(svg).toHaveAttribute("data-warn", "true");
+    const latest = screen.getByTestId("drift-latest");
+    expect(latest.className).toMatch(/text-red-600/);
+  });
+
+  it("composite-chart point clicks navigate to the report-detail route", async () => {
+    const user = userEvent.setup();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={["/run"]}>
+          <Routes>
+            <Route path="/run" element={<Run />} />
+            <Route
+              path="/run/reports/:timestamp"
+              element={<div data-testid="detail-landed">landed</div>}
+            />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    const hits = screen.getAllByTestId("chart-point-hit");
+    expect(hits.length).toBe(3);
+    await user.click(hits[hits.length - 1]);
+    expect(screen.getByTestId("detail-landed")).toBeInTheDocument();
   });
 });
