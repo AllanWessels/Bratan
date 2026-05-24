@@ -311,6 +311,23 @@ class SeedListResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Red-team generated test-case files (read-only browsing surface).
+# Each file under test_cases/generated/<timestamp>.jsonl is a batch produced
+# by one red-team agent invocation. We expose it as a list-of-files endpoint
+# plus a per-file read endpoint; the seed.jsonl append-only invariant carries
+# over here (no edit/delete UI), so this is strictly read-side.
+# ---------------------------------------------------------------------------
+
+
+class GeneratedFileSummary(BaseModel):
+    """One red-team-generated batch on disk."""
+
+    timestamp: str
+    n_cases: int
+    file_path: str
+
+
+# ---------------------------------------------------------------------------
 # M2 — Loop control + report read endpoints
 # ---------------------------------------------------------------------------
 

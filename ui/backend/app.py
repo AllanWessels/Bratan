@@ -25,6 +25,7 @@ from ui.backend.schemas import (
     CorpusFile,
     CorpusSearchRequest,
     CorpusSearchResponse,
+    GeneratedFileSummary,
     IngestStatus,
     LoopStartRequest,
     LoopStartResponse,
@@ -34,6 +35,7 @@ from ui.backend.schemas import (
     ReportSummary,
     SaveStepRequest,
     SaveStepResponse,
+    SeedCase,
     SeedListResponse,
     SeedSaveRequest,
     SeedSaveResponse,
@@ -213,6 +215,25 @@ def seed_save_draft(draft_id: str, draft: dict) -> dict:
 def seed_delete_draft(draft_id: str) -> JSONResponse:
     seed_store.delete_draft(PROJECT_ROOT, draft_id)
     return JSONResponse({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# Red-team generated cases — read-only browsing of test_cases/generated/.
+# The append-only invariant means there's deliberately no edit/delete here.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/seed/generated", response_model=list[GeneratedFileSummary])
+def seed_generated_files() -> list[GeneratedFileSummary]:
+    return seed_store.list_generated_files(PROJECT_ROOT)
+
+
+@app.get("/api/seed/generated/{timestamp}", response_model=list[SeedCase])
+def seed_generated_cases(timestamp: str) -> list[SeedCase]:
+    try:
+        return seed_store.read_generated_file(PROJECT_ROOT, timestamp)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="generated_file_not_found") from exc
 
 
 # ---------------------------------------------------------------------------

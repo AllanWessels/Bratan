@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   useSeedSave: vi.fn(),
   useSeedValidate: vi.fn(),
   useCorpusSearch: vi.fn(),
+  useGeneratedFiles: vi.fn(),
+  useGeneratedCases: vi.fn(),
 }));
 
 vi.mock("@/api/hooks", () => mocks);
@@ -121,6 +123,16 @@ beforeEach(() => {
     isPending: false,
     isError: false,
     error: null,
+  });
+  mocks.useGeneratedFiles.mockReturnValue({
+    data: [],
+    isLoading: false,
+    isError: false,
+  });
+  mocks.useGeneratedCases.mockReturnValue({
+    data: [],
+    isLoading: false,
+    isError: false,
   });
 });
 

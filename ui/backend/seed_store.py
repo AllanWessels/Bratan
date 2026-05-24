@@ -21,6 +21,7 @@ from typing import Any
 
 from ui.backend.schemas import (
     BratanConfig,
+    GeneratedFileSummary,
     Passage,
     PassageRef,
     SeedCase,
@@ -36,6 +37,7 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(os.environ.get("BRATAN_PROJECT_ROOT", Path(__file__).resolve().parents[2]))
 SEED_PATH = _PROJECT_ROOT / "test_cases" / "seed.jsonl"
 DRAFTS_DIR = _PROJECT_ROOT / "test_cases" / ".drafts"
+GENERATED_DIR = _PROJECT_ROOT / "test_cases" / "generated"
 
 _WRITE_LOCK = threading.Lock()
 
@@ -209,6 +211,57 @@ def delete_draft(project_root: Path, draft_id: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Red-team generated test-case files (read-only).
+# ---------------------------------------------------------------------------
+
+
+def list_generated_files(project_root: Path) -> list[GeneratedFileSummary]:
+    """Enumerate `test_cases/generated/*.jsonl`, newest first."""
+    gen_dir = _generated_dir(project_root)
+    if not gen_dir.exists():
+        return []
+    summaries: list[GeneratedFileSummary] = []
+    for fp in gen_dir.glob("*.jsonl"):
+        try:
+            n_cases = _count_jsonl_rows(fp)
+        except Exception as exc:
+            logger.warning("Could not count rows in %s: %s", fp, exc)
+            continue
+        summaries.append(
+            GeneratedFileSummary(
+                timestamp=fp.stem,
+                n_cases=n_cases,
+                file_path=str(fp.relative_to(project_root))
+                if fp.is_relative_to(project_root)
+                else str(fp),
+            )
+        )
+    # Filename stems are timestamps; sorting descending puts newest first.
+    summaries.sort(key=lambda s: s.timestamp, reverse=True)
+    return summaries
+
+
+def read_generated_file(project_root: Path, timestamp: str) -> list[SeedCase]:
+    """Parse one generated batch into SeedCase objects."""
+    safe = _sanitize(timestamp)
+    gen_dir = _generated_dir(project_root)
+    fp = gen_dir / f"{safe}.jsonl"
+    if not fp.exists():
+        raise FileNotFoundError(f"generated file not found: {timestamp}")
+    out: list[SeedCase] = []
+    for line in fp.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+            out.append(_seed_case_from_raw(obj))
+        except Exception as exc:
+            logger.warning("Skipping malformed row in %s: %s", fp.name, exc)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Internals
 # ---------------------------------------------------------------------------
 
@@ -293,6 +346,18 @@ def _question_id(question: str) -> str:
 
 def _drafts_dir(project_root: Path) -> Path:
     return project_root / "test_cases" / ".drafts"
+
+
+def _generated_dir(project_root: Path) -> Path:
+    return project_root / "test_cases" / "generated"
+
+
+def _count_jsonl_rows(path: Path) -> int:
+    n = 0
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            n += 1
+    return n
 
 
 def _delete_draft_file(draft_id: str) -> None:
