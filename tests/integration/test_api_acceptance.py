@@ -171,3 +171,55 @@ def test_seed_drafts_lifecycle(client, tmp_project: Path) -> None:
     assert r.status_code == 200
     r = client.get("/api/seed/drafts")
     assert not any(d.get("id") == "abc-123" for d in r.json())
+
+
+def test_generated_files_roundtrip(client, tmp_project: Path) -> None:
+    """Red-team-generated batches surface via /api/seed/generated read endpoints."""
+    gen_dir = tmp_project / "test_cases" / "generated"
+    gen_dir.mkdir(parents=True, exist_ok=True)
+
+    # Empty start state.
+    r = client.get("/api/seed/generated")
+    assert r.status_code == 200
+    assert r.json() == []
+
+    # Write a fake batch as if the red team had produced it.
+    timestamp = "2026-05-23T12-00-00Z"
+    fake_case = {
+        "id": "rt-001",
+        "question": "Why is the sky blue?",
+        "ground_truth": "Rayleigh scattering.",
+        "source_passages": [{"path": "physics.md", "line_start": 10, "line_end": 12}],
+        "failure_category": "straightforward",
+        "notes": "",
+        "hypothesis": "model overrelies on lexical match",
+        "created_at": "2026-05-23T12:00:00Z",
+        "created_by": "red-team",
+    }
+    (gen_dir / f"{timestamp}.jsonl").write_text(
+        json.dumps(fake_case) + "\n", encoding="utf-8"
+    )
+
+    # Listing surfaces the new batch.
+    r = client.get("/api/seed/generated")
+    assert r.status_code == 200
+    files = r.json()
+    assert len(files) == 1
+    summary = files[0]
+    assert summary["timestamp"] == timestamp
+    assert summary["n_cases"] == 1
+    assert summary["file_path"].endswith(f"{timestamp}.jsonl")
+
+    # Reading the batch by timestamp returns the case content.
+    r = client.get(f"/api/seed/generated/{timestamp}")
+    assert r.status_code == 200, r.text
+    cases = r.json()
+    assert len(cases) == 1
+    assert cases[0]["id"] == "rt-001"
+    assert cases[0]["question"] == "Why is the sky blue?"
+    assert cases[0]["failure_category"] == "straightforward"
+    assert cases[0]["created_by"] == "red-team"
+
+    # Unknown timestamp 404s instead of silently returning empty.
+    r = client.get("/api/seed/generated/does-not-exist")
+    assert r.status_code == 404

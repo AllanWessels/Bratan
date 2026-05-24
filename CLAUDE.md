@@ -142,6 +142,7 @@ told the same in their AGENTS.md files. Do not work around them.
 | Adding a new optimization technique | Author a new `/skills/<name>/SKILL.md` |
 | Diagnosing why scores plateaued | `/reports/regressions.md`, then failure clustering skill |
 | Debugging a single bad answer | `/scripts/eval_single.py` with the case ID |
+| Understanding how the pieces fit together | `docs/architecture.md` |
 
 ## What this project deliberately does not do
 

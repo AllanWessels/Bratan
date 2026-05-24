@@ -24,6 +24,7 @@ import type {
   ReportSummary,
   SaveStepRequest,
   SaveStepResponse,
+  SeedCase,
   SeedDraft,
   SeedListResponse,
   SeedSaveRequest,
@@ -36,6 +37,7 @@ import type {
   TestVectorDBRequest,
   TestVLLMRequest,
 } from "./types";
+import type { GeneratedFileSummary } from "./types-generated";
 
 // ---------- Setup wizard ----------
 
@@ -211,6 +213,31 @@ export function useDeleteDraft() {
   });
 }
 
+// ---------- Red-team generated cases (read-only) ----------
+
+export function useGeneratedFiles(
+  options?: Omit<UseQueryOptions<GeneratedFileSummary[]>, "queryKey" | "queryFn">,
+) {
+  return useQuery<GeneratedFileSummary[]>({
+    queryKey: ["seed-generated"],
+    queryFn: () => request<GeneratedFileSummary[]>("/api/seed/generated"),
+    ...options,
+  });
+}
+
+export function useGeneratedCases(
+  timestamp: string | null,
+  options?: Omit<UseQueryOptions<SeedCase[]>, "queryKey" | "queryFn">,
+) {
+  return useQuery<SeedCase[]>({
+    queryKey: ["seed-generated", timestamp],
+    queryFn: () =>
+      request<SeedCase[]>(`/api/seed/generated/${encodeURIComponent(timestamp ?? "")}`),
+    enabled: !!timestamp,
+    ...options,
+  });
+}
+
 // ---------- M2 — Reports + loop control ----------
 
 export function useLatestReport(
@@ -234,6 +261,18 @@ export function useReportHistory() {
   return useQuery<ReportSummary[]>({
     queryKey: ["report-history"],
     queryFn: () => request<ReportSummary[]>("/api/reports/history"),
+  });
+}
+
+export function useReportByTimestamp(
+  ts: string | null | undefined,
+  options?: Omit<UseQueryOptions<IterationReport>, "queryKey" | "queryFn" | "enabled">,
+) {
+  return useQuery<IterationReport>({
+    queryKey: ["report-by-ts", ts ?? ""],
+    queryFn: () => request<IterationReport>(`/api/reports/${encodeURIComponent(ts ?? "")}`),
+    enabled: !!ts,
+    ...options,
   });
 }
 

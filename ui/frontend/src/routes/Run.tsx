@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { ArrowLeft, Play, Square } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
@@ -19,6 +19,7 @@ import { formatPercent, formatUSD, prettyFailureCategory } from "@/lib/format";
 import { cn } from "@/lib/cn";
 
 export function Run() {
+  const navigate = useNavigate();
   const cfg = useConfig();
   const latest = useLatestReport();
   const history = useReportHistory();
@@ -34,12 +35,17 @@ export function Run() {
   }
 
   const series = buildSeries(history.data ?? [], stream.reports, latest.data ?? null);
+  const fullReports = buildFullReports(stream.reports, latest.data ?? null);
   const current = stream.reports.length > 0 ? stream.reports[stream.reports.length - 1] : latest.data ?? null;
   const previous = series.length >= 2 ? series[series.length - 2] : null;
   const delta = current && previous ? current.composite_mean - previous.composite_mean : null;
   const budgetUSD = cfg.data?.cost.usd_per_run ?? null;
   const stopReason = stream.lastStopReason ?? (current?.stop_reason ?? null);
   const running = status.data?.running ?? false;
+
+  const handlePointClick = (timestamp: string) => {
+    navigate(`/run/reports/${encodeURIComponent(timestamp)}`);
+  };
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-50">
@@ -77,7 +83,7 @@ export function Run() {
 
         <div className="grid gap-6 lg:grid-cols-3">
           <Card title="Composite over time" className="lg:col-span-2">
-            <CompositeChart points={series} />
+            <CompositeChart points={series} onPointClick={handlePointClick} />
           </Card>
 
           <Card title="Cost meter">
@@ -86,14 +92,28 @@ export function Run() {
         </div>
 
         <div className="grid gap-6 lg:grid-cols-2">
-          <Card title="Per-category">
-            <PerCategoryBars current={current} />
+          <Card title="Per-category trend">
+            <PerCategoryTrend reports={fullReports} />
           </Card>
 
-          <Card title="Regressions (last iteration)">
-            <RegressionList current={current} />
+          <Card title="Cost over iterations">
+            <CostBars reports={fullReports} />
           </Card>
         </div>
+
+        <div className="grid gap-6 lg:grid-cols-2">
+          <Card title="Drift timeline">
+            <DriftTimeline reports={fullReports} />
+          </Card>
+
+          <Card title="Per-category (latest)">
+            <PerCategoryBars current={current} />
+          </Card>
+        </div>
+
+        <Card title="Regressions (last iteration)">
+          <RegressionList current={current} />
+        </Card>
 
         <RunControls running={running} />
       </main>
@@ -222,9 +242,16 @@ function StopBadge({ reason }: { reason: StopReason }) {
 interface ChartPoint {
   iteration: number;
   composite_mean: number;
+  timestamp: string;
 }
 
-function CompositeChart({ points }: { points: ChartPoint[] }) {
+function CompositeChart({
+  points,
+  onPointClick,
+}: {
+  points: ChartPoint[];
+  onPointClick?: (timestamp: string) => void;
+}) {
   const width = 640;
   const height = 220;
   const padding = { top: 16, right: 16, bottom: 28, left: 36 };
@@ -298,20 +325,41 @@ function CompositeChart({ points }: { points: ChartPoint[] }) {
 
         <path d={pathD} fill="none" stroke="#2563eb" strokeWidth={2} />
 
-        {points.map((p) => (
-          <circle
-            key={`${p.iteration}-${p.composite_mean}`}
-            cx={x(p.iteration)}
-            cy={y(p.composite_mean)}
-            r={3}
-            fill="#2563eb"
-            data-testid="chart-point"
-          />
-        ))}
+        {points.map((p) => {
+          const cx = x(p.iteration);
+          const cy = y(p.composite_mean);
+          return (
+            <g key={`${p.iteration}-${p.composite_mean}-${p.timestamp}`}>
+              {/* Larger invisible hit target so the dot is easy to click/tap. */}
+              <circle
+                cx={cx}
+                cy={cy}
+                r={10}
+                fill="transparent"
+                style={{ cursor: onPointClick ? "pointer" : "default" }}
+                data-testid="chart-point-hit"
+                data-timestamp={p.timestamp}
+                onClick={() => onPointClick?.(p.timestamp)}
+              >
+                <title>
+                  Iteration {p.iteration} — composite {p.composite_mean.toFixed(3)} · click for detail
+                </title>
+              </circle>
+              <circle
+                cx={cx}
+                cy={cy}
+                r={3}
+                fill="#2563eb"
+                data-testid="chart-point"
+                pointerEvents="none"
+              />
+            </g>
+          );
+        })}
 
         {points.map((p) => (
           <text
-            key={`label-${p.iteration}`}
+            key={`label-${p.iteration}-${p.timestamp}`}
             x={x(p.iteration)}
             y={height - padding.bottom + 14}
             textAnchor="middle"
@@ -321,6 +369,308 @@ function CompositeChart({ points }: { points: ChartPoint[] }) {
             {p.iteration}
           </text>
         ))}
+      </svg>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Per-category trend lines — small multiples view, one mini SVG per category
+// ---------------------------------------------------------------------------
+
+const CATEGORY_LINE_COLOR = "#0ea5e9";
+
+function PerCategoryTrend({ reports }: { reports: IterationReport[] }) {
+  // Collect the union of categories that ever appear in the series.
+  const categories = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of reports) {
+      for (const cat of Object.keys(r.per_category)) {
+        set.add(cat);
+      }
+    }
+    return Array.from(set).sort();
+  }, [reports]);
+
+  if (reports.length === 0 || categories.length === 0) {
+    return <p className="text-sm text-slate-400">No per-category trend yet.</p>;
+  }
+
+  return (
+    <div
+      className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3"
+      data-testid="per-category-trend"
+    >
+      {categories.map((cat) => {
+        const series = reports.map((r) => ({
+          iteration: r.iteration,
+          value: r.per_category[cat]?.avg_composite ?? null,
+        }));
+        return <CategoryMini key={cat} category={cat} series={series} />;
+      })}
+    </div>
+  );
+}
+
+function CategoryMini({
+  category,
+  series,
+}: {
+  category: string;
+  series: Array<{ iteration: number; value: number | null }>;
+}) {
+  const width = 180;
+  const height = 60;
+  const padding = { top: 4, right: 4, bottom: 4, left: 4 };
+  const innerW = width - padding.left - padding.right;
+  const innerH = height - padding.top - padding.bottom;
+  const points = series.filter((s): s is { iteration: number; value: number } => s.value !== null);
+  const iterations = series.map((s) => s.iteration);
+  const xMin = iterations.length ? Math.min(...iterations) : 0;
+  const xMax = iterations.length ? Math.max(...iterations) : 1;
+  const xSpan = Math.max(1, xMax - xMin);
+  const x = (it: number) => padding.left + ((it - xMin) / xSpan) * innerW;
+  const y = (v: number) => padding.top + (1 - v) * innerH;
+
+  const pathD = points
+    .map((p, i) => `${i === 0 ? "M" : "L"} ${x(p.iteration).toFixed(2)} ${y(p.value).toFixed(2)}`)
+    .join(" ");
+
+  const last = points.length ? points[points.length - 1].value : null;
+
+  return (
+    <div className="rounded-xl border border-slate-100 bg-slate-50 p-2" data-testid={`category-trend-${category}`}>
+      <div className="mb-1 flex items-baseline justify-between gap-2 text-xs">
+        <span className="truncate font-medium text-slate-700" title={prettyFailureCategory(category)}>
+          {prettyFailureCategory(category)}
+        </span>
+        <span className="tabular-nums text-slate-500">
+          {last !== null ? last.toFixed(2) : "—"}
+        </span>
+      </div>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="h-12 w-full"
+        role="img"
+        aria-label={`${category} trend`}
+        data-testid={`category-mini-${category}`}
+      >
+        {[0, 0.5, 1].map((t) => (
+          <line
+            key={t}
+            x1={padding.left}
+            x2={width - padding.right}
+            y1={y(t)}
+            y2={y(t)}
+            stroke="#e2e8f0"
+            strokeDasharray="2 3"
+          />
+        ))}
+        {points.length > 0 && (
+          <path d={pathD} fill="none" stroke={CATEGORY_LINE_COLOR} strokeWidth={1.5} />
+        )}
+        {points.map((p) => (
+          <circle
+            key={`${p.iteration}`}
+            cx={x(p.iteration)}
+            cy={y(p.value)}
+            r={1.8}
+            fill={CATEGORY_LINE_COLOR}
+            data-testid={`category-point-${category}`}
+          >
+            <title>
+              iter {p.iteration}: {p.value.toFixed(3)}
+            </title>
+          </circle>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Cost over iterations — bar chart
+// ---------------------------------------------------------------------------
+
+function CostBars({ reports }: { reports: IterationReport[] }) {
+  const total = reports.reduce((acc, r) => acc + (r.cost.usd_spent ?? 0), 0);
+
+  if (reports.length === 0) {
+    return <p className="text-sm text-slate-400">No cost samples yet.</p>;
+  }
+
+  const width = 360;
+  const height = 140;
+  const padding = { top: 12, right: 8, bottom: 22, left: 32 };
+  const innerW = width - padding.left - padding.right;
+  const innerH = height - padding.top - padding.bottom;
+  const values = reports.map((r) => r.cost.usd_spent ?? 0);
+  const maxV = Math.max(0.0001, ...values);
+  const bw = Math.max(4, innerW / Math.max(1, reports.length) - 4);
+  const stepX = innerW / Math.max(1, reports.length);
+
+  return (
+    <div className="flex flex-col gap-2" data-testid="cost-bars">
+      <div className="flex items-baseline justify-between">
+        <span className="text-2xl font-semibold tabular-nums text-slate-900">{formatUSD(total)}</span>
+        <span className="text-xs text-slate-500">total across {reports.length} iter</span>
+      </div>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label="Cost USD per iteration"
+        className="h-32 w-full"
+        data-testid="cost-bars-svg"
+        data-iterations={reports.length}
+      >
+        {[0, 0.5, 1].map((t) => {
+          const yy = padding.top + (1 - t) * innerH;
+          return (
+            <g key={t}>
+              <line
+                x1={padding.left}
+                x2={width - padding.right}
+                y1={yy}
+                y2={yy}
+                stroke="#e2e8f0"
+                strokeDasharray="2 3"
+              />
+              <text x={padding.left - 4} y={yy + 3} textAnchor="end" fontSize="9" className="fill-slate-400">
+                {formatUSD(maxV * t)}
+              </text>
+            </g>
+          );
+        })}
+        {reports.map((r, i) => {
+          const v = r.cost.usd_spent ?? 0;
+          const bx = padding.left + i * stepX + (stepX - bw) / 2;
+          const bh = (v / maxV) * innerH;
+          const by = padding.top + (innerH - bh);
+          return (
+            <g key={`${r.iteration}-${r.timestamp}`}>
+              <rect
+                x={bx}
+                y={by}
+                width={bw}
+                height={bh}
+                fill="#6366f1"
+                rx={2}
+                data-testid="cost-bar"
+              >
+                <title>
+                  iter {r.iteration}: {formatUSD(v)}
+                </title>
+              </rect>
+              <text
+                x={bx + bw / 2}
+                y={height - padding.bottom + 12}
+                textAnchor="middle"
+                fontSize="9"
+                className="fill-slate-500"
+              >
+                {r.iteration}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Drift timeline — small sparkline of disagreement_rate per iteration
+// ---------------------------------------------------------------------------
+
+const DRIFT_WARN_THRESHOLD = 0.05;
+
+function DriftTimeline({ reports }: { reports: IterationReport[] }) {
+  if (reports.length === 0) {
+    return <p className="text-sm text-slate-400">No drift samples yet.</p>;
+  }
+
+  const values = reports.map((r) => r.drift?.disagreement_rate ?? 0);
+  const anyHigh = values.some((v) => v > DRIFT_WARN_THRESHOLD);
+  const latest = values[values.length - 1];
+
+  const width = 360;
+  const height = 80;
+  const padding = { top: 8, right: 8, bottom: 18, left: 32 };
+  const innerW = width - padding.left - padding.right;
+  const innerH = height - padding.top - padding.bottom;
+  const maxV = Math.max(0.1, ...values, DRIFT_WARN_THRESHOLD * 2);
+  const iters = reports.map((r) => r.iteration);
+  const xMin = Math.min(...iters);
+  const xMax = Math.max(...iters);
+  const xSpan = Math.max(1, xMax - xMin);
+  const x = (it: number) => padding.left + ((it - xMin) / xSpan) * innerW;
+  const y = (v: number) => padding.top + (1 - v / maxV) * innerH;
+
+  const pathD = reports
+    .map((r, i) => `${i === 0 ? "M" : "L"} ${x(r.iteration).toFixed(2)} ${y(r.drift?.disagreement_rate ?? 0).toFixed(2)}`)
+    .join(" ");
+
+  const strokeColor = anyHigh ? "#dc2626" : "#10b981";
+
+  return (
+    <div className="flex flex-col gap-2" data-testid="drift-timeline">
+      <div className="flex items-baseline justify-between">
+        <span
+          className={cn(
+            "text-2xl font-semibold tabular-nums",
+            anyHigh ? "text-red-600" : "text-slate-900",
+          )}
+          data-testid="drift-latest"
+        >
+          {formatPercent(latest, 1)}
+        </span>
+        <span className="text-xs text-slate-500">judge disagreement (latest)</span>
+      </div>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label="Judge drift over iterations"
+        className="h-20 w-full"
+        data-testid="drift-svg"
+        data-warn={anyHigh ? "true" : "false"}
+      >
+        {/* 5% warning line */}
+        <line
+          x1={padding.left}
+          x2={width - padding.right}
+          y1={y(DRIFT_WARN_THRESHOLD)}
+          y2={y(DRIFT_WARN_THRESHOLD)}
+          stroke="#fca5a5"
+          strokeDasharray="3 3"
+        />
+        <text
+          x={padding.left - 4}
+          y={y(DRIFT_WARN_THRESHOLD) + 3}
+          textAnchor="end"
+          fontSize="9"
+          className="fill-red-400"
+        >
+          5%
+        </text>
+        <path d={pathD} fill="none" stroke={strokeColor} strokeWidth={1.5} />
+        {reports.map((r) => {
+          const v = r.drift?.disagreement_rate ?? 0;
+          const dotColor = v > DRIFT_WARN_THRESHOLD ? "#dc2626" : "#10b981";
+          return (
+            <circle
+              key={`${r.iteration}-${r.timestamp}`}
+              cx={x(r.iteration)}
+              cy={y(v)}
+              r={2.5}
+              fill={dotColor}
+              data-testid="drift-point"
+            >
+              <title>
+                iter {r.iteration}: {formatPercent(v, 2)}
+              </title>
+            </circle>
+          );
+        })}
       </svg>
     </div>
   );
@@ -559,21 +909,48 @@ function buildSeries(
     map.set(keyOf(h.iteration, h.timestamp), {
       iteration: h.iteration,
       composite_mean: h.composite_mean,
+      timestamp: h.timestamp,
     });
   }
   for (const r of streamed) {
     map.set(keyOf(r.iteration, r.timestamp), {
       iteration: r.iteration,
       composite_mean: r.composite_mean,
+      timestamp: r.timestamp,
     });
   }
   if (latest) {
     map.set(keyOf(latest.iteration, latest.timestamp), {
       iteration: latest.iteration,
       composite_mean: latest.composite_mean,
+      timestamp: latest.timestamp,
     });
   }
 
+  return Array.from(map.values()).sort((a, b) => a.iteration - b.iteration);
+}
+
+/**
+ * For the per-category, cost, and drift mini-charts we need the full
+ * IterationReport, not just the (iteration, composite) summary. History
+ * endpoint only returns summaries — so this is restricted to whatever
+ * we have full payloads for: the streamed reports plus the latest snapshot.
+ *
+ * That's a conscious tradeoff: the composite chart can reach back over
+ * the full run history, but the trend/cost/drift panels show only what
+ * the dashboard has actually fetched full reports for in this session.
+ */
+function buildFullReports(
+  streamed: IterationReport[],
+  latest: IterationReport | null,
+): IterationReport[] {
+  const map = new Map<string, IterationReport>();
+  for (const r of streamed) {
+    map.set(keyOf(r.iteration, r.timestamp), r);
+  }
+  if (latest) {
+    map.set(keyOf(latest.iteration, latest.timestamp), latest);
+  }
   return Array.from(map.values()).sort((a, b) => a.iteration - b.iteration);
 }
 

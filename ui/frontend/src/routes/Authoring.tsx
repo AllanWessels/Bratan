@@ -5,6 +5,7 @@ import { Spinner } from "@/components/Spinner";
 import { CorpusBrowser } from "./authoring/CorpusBrowser";
 import { CaseWizard } from "./authoring/CaseWizard";
 import { DraftList } from "./authoring/DraftList";
+import { GeneratedList } from "./authoring/GeneratedList";
 import { cn } from "@/lib/cn";
 
 export function Authoring() {
@@ -85,6 +86,7 @@ export function Authoring() {
         <aside className="flex w-72 shrink-0 flex-col gap-6">
           <CorpusBrowser />
           <DraftList />
+          <GeneratedList />
         </aside>
         <main className="flex-1">
           <CaseWizard />
