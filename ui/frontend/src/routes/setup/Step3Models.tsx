@@ -232,10 +232,33 @@ export function Step3Models({ config }: Props) {
         </div>
       </Card>
 
+      {data.use_local_prejudge && (
+        <GetVLLMRunningCard
+          model={data.prejudge_model}
+          baseUrl={data.vllm_base_url}
+          state={vllmStatus.data?.state ?? "stopped"}
+          managedModel={vllmStatus.data?.model ?? null}
+          managedPort={vllmStatus.data?.port ?? null}
+          elapsedS={vllmStatus.data?.elapsed_s ?? 0}
+          message={vllmStatus.data?.message ?? null}
+          starting={startVLLM.isPending}
+          onStart={() =>
+            startVLLM.mutate({
+              model: data.prejudge_model,
+              port: parsePortFromUrl(data.vllm_base_url),
+            })
+          }
+          onStop={() => stopVLLM.mutate()}
+          startError={startVLLM.error}
+        />
+      )}
+
       <Card
         title="Local vLLM endpoint (optional)"
         description={
           <>
+            Point Bratan at the vLLM server you started above (or one you
+            already had running). Default <code>http://localhost:8001</code>.
             Only used if <strong>"Local pre-judge"</strong> is toggled ON above.
             The pre-judge is a small, local model that grades cases cheaply
             during inner-loop iterations — the oracle (Anthropic Sonnet 4) still
@@ -339,27 +362,6 @@ export function Step3Models({ config }: Props) {
           </div>
         </div>
       </Card>
-
-      {data.use_local_prejudge && (
-        <GetVLLMRunningCard
-          model={data.prejudge_model}
-          baseUrl={data.vllm_base_url}
-          state={vllmStatus.data?.state ?? "stopped"}
-          managedModel={vllmStatus.data?.model ?? null}
-          managedPort={vllmStatus.data?.port ?? null}
-          elapsedS={vllmStatus.data?.elapsed_s ?? 0}
-          message={vllmStatus.data?.message ?? null}
-          starting={startVLLM.isPending}
-          onStart={() =>
-            startVLLM.mutate({
-              model: data.prejudge_model,
-              port: parsePortFromUrl(data.vllm_base_url),
-            })
-          }
-          onStop={() => stopVLLM.mutate()}
-          startError={startVLLM.error}
-        />
-      )}
     </div>
   );
 }
@@ -418,9 +420,9 @@ function GetVLLMRunningCard({
       title="Get vLLM running"
       description={
         <>
-          The Test above checks if a vLLM server is reachable. If you don't have
-          one running yet, pick one of the two paths below — Bratan can either
-          start it for you, or hand you the exact command to run it yourself.
+          Start a local vLLM server before pointing Bratan at it below. Pick one
+          of the two paths — Bratan can either start it for you, or hand you the
+          exact command to run it yourself.
         </>
       }
     >
