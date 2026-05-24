@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type {
@@ -216,5 +217,177 @@ describe("Run", () => {
     mocks.useLatestReport.mockReturnValue({ data: stopped, isLoading: false });
     render(withProviders(<Run />));
     expect(screen.getByTestId("stop-badge")).toHaveTextContent(/convergence/);
+  });
+
+  it("renders the cost meter with usd_spent + the budget cap", () => {
+    render(withProviders(<Run />));
+    // usd_spent is 1.25, budget is 5.00
+    expect(screen.getByText(/\$1\.25/)).toBeInTheDocument();
+    expect(screen.getByText(/\$5\.00/)).toBeInTheDocument();
+  });
+
+  it("renders the four run-control inputs (iterations / budget / skip_red / no_agents)", () => {
+    render(withProviders(<Run />));
+    expect(screen.getByLabelText(/^iterations$/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/budget usd/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/skip red team/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/no agents/i)).toBeInTheDocument();
+  });
+
+  it("submits run controls with the typed values", async () => {
+    const startMutate = vi.fn();
+    mocks.useStartLoop.mockReturnValue({
+      mutate: startMutate,
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    const user = userEvent.setup();
+    render(withProviders(<Run />));
+    const iterations = screen.getByLabelText(/^iterations$/i);
+    await user.clear(iterations);
+    await user.type(iterations, "3");
+    const budget = screen.getByLabelText(/budget usd/i);
+    await user.type(budget, "2.5");
+    await user.click(screen.getByLabelText(/skip red team/i));
+    await user.click(screen.getByLabelText(/no agents/i));
+    await user.click(screen.getByTestId("start-button"));
+    expect(startMutate).toHaveBeenCalledWith({
+      iterations: 3,
+      budget_usd: 2.5,
+      skip_red: true,
+      no_agents: true,
+    });
+  });
+
+  it("clicking Stop fires the stop mutation", async () => {
+    const stopMutate = vi.fn();
+    mocks.useLoopStatus.mockReturnValue({
+      data: { ...sampleStatus, running: true, task_id: "abc", started_at: "now" },
+      isLoading: false,
+    });
+    mocks.useStopLoop.mockReturnValue({
+      mutate: stopMutate,
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    const user = userEvent.setup();
+    render(withProviders(<Run />));
+    await user.click(screen.getByTestId("stop-button"));
+    expect(stopMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables the run inputs while a run is in progress", () => {
+    mocks.useLoopStatus.mockReturnValue({
+      data: { ...sampleStatus, running: true, task_id: "abc", started_at: "now" },
+      isLoading: false,
+    });
+    render(withProviders(<Run />));
+    expect(screen.getByLabelText(/^iterations$/i)).toBeDisabled();
+    expect(screen.getByLabelText(/budget usd/i)).toBeDisabled();
+    expect(screen.getByLabelText(/skip red team/i)).toBeDisabled();
+    expect(screen.getByLabelText(/no agents/i)).toBeDisabled();
+  });
+
+  it("includes streamed reports in the chart series", () => {
+    const streamed = fakeReport(4, "2026-05-23T13:00:00+00:00", 0.81);
+    mocks.useLoopStream.mockReturnValue({
+      reports: [streamed],
+      lastStopReason: null,
+      connected: true,
+    });
+    render(withProviders(<Run />));
+    const chart = screen.getByTestId("composite-chart");
+    expect(chart).toHaveAttribute("data-points", "4");
+    expect(screen.getAllByTestId("chart-point")).toHaveLength(4);
+  });
+
+  it("renders 'No iterations yet' when no reports are available", () => {
+    mocks.useLatestReport.mockReturnValue({ data: null, isLoading: false });
+    mocks.useReportHistory.mockReturnValue({ data: [], isLoading: false });
+    mocks.useLoopStream.mockReturnValue({
+      reports: [],
+      lastStopReason: null,
+      connected: false,
+    });
+    render(withProviders(<Run />));
+    expect(screen.getByText(/No iterations yet/i)).toBeInTheDocument();
+  });
+
+  it("renders 'live' when the stream is connected", () => {
+    render(withProviders(<Run />));
+    expect(screen.getByText(/^live$/i)).toBeInTheDocument();
+  });
+
+  it("renders 'offline' when the stream is disconnected", () => {
+    mocks.useLoopStream.mockReturnValue({
+      reports: [],
+      lastStopReason: null,
+      connected: false,
+    });
+    render(withProviders(<Run />));
+    expect(screen.getByText(/offline/i)).toBeInTheDocument();
+  });
+
+  it("renders an over-budget cost meter in red when overrun", () => {
+    const over = fakeReport(3, "2026-05-23T12:00:00+00:00", 0.72);
+    over.cost.usd_spent = 7.5; // > 5 budget
+    mocks.useLatestReport.mockReturnValue({ data: over, isLoading: false });
+    render(withProviders(<Run />));
+    const bar = screen.getAllByRole("progressbar").pop()!;
+    const inner = bar.querySelector("div") as HTMLElement;
+    expect(inner.className).toMatch(/bg-red-500/);
+  });
+
+  it("shows the iteration delta vs the prior iteration", () => {
+    render(withProviders(<Run />));
+    // Iteration 3 composite was 0.72, prior was 0.68 → +0.04
+    expect(screen.getByText(/\+0\.040 vs prior/)).toBeInTheDocument();
+  });
+
+  it("does not render the start error message when there is none", () => {
+    render(withProviders(<Run />));
+    // No mutation error -> no red message
+    expect(screen.queryByText(/started loop fail/i)).not.toBeInTheDocument();
+  });
+
+  it("renders the start error message when start.isError is true", () => {
+    mocks.useStartLoop.mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+      isError: true,
+      error: new Error("Couldn't start: invalid budget"),
+    });
+    render(withProviders(<Run />));
+    expect(screen.getByText(/Couldn't start: invalid budget/)).toBeInTheDocument();
+  });
+
+  it("renders empty-state for per-category when current is null", () => {
+    mocks.useLatestReport.mockReturnValue({ data: null, isLoading: false });
+    mocks.useReportHistory.mockReturnValue({ data: [], isLoading: false });
+    mocks.useLoopStream.mockReturnValue({
+      reports: [],
+      lastStopReason: null,
+      connected: true,
+    });
+    render(withProviders(<Run />));
+    expect(screen.getByText(/No per-category data yet/i)).toBeInTheDocument();
+  });
+
+  it("renders the no-regressions empty state when regressions is empty", () => {
+    const clean = fakeReport(3, "2026-05-23T12:00:00+00:00", 0.72);
+    clean.regressions = [];
+    mocks.useLatestReport.mockReturnValue({ data: clean, isLoading: false });
+    render(withProviders(<Run />));
+    expect(screen.getByText(/No regressions detected/i)).toBeInTheDocument();
+  });
+
+  it("renders the regression case id inside the regressions table", () => {
+    render(withProviders(<Run />));
+    // The case-001 row is rendered inside a <td> in the regressions table.
+    const rows = screen.getAllByText("case-001");
+    expect(rows.length).toBeGreaterThan(0);
+    expect(within(rows[0].parentElement as HTMLElement).getByText("0.85")).toBeInTheDocument();
   });
 });

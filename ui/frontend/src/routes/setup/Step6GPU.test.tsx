@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { BratanConfig, ProbeResult } from "@/api/types";
 
@@ -141,5 +142,56 @@ describe("Step6GPU VRAM math", () => {
     expect(screen.getByTestId("vram-mb-embedding")).toHaveTextContent("130 MB");
     expect(screen.getByTestId("vram-mb-reranker")).toHaveTextContent("2300 MB");
     expect(screen.getByTestId("vram-mb-prejudge")).toHaveTextContent("5000 MB");
+  });
+
+  it("renders the 'Detect GPU now' button", () => {
+    render(withProviders(<Step6GPU config={makeConfig()} />));
+    expect(
+      screen.getByRole("button", { name: /detect gpu now/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("invokes the probe mutation when 'Detect GPU now' is clicked", async () => {
+    const probeMutate = vi.fn();
+    mocks.useProbe.mockReturnValue({
+      data: sampleProbe,
+      mutate: probeMutate,
+      isPending: false,
+      isError: false,
+    });
+    const user = userEvent.setup();
+    render(withProviders(<Step6GPU config={makeConfig()} />));
+    // The mount-effect already triggered one call; clicking should add another.
+    const before = probeMutate.mock.calls.length;
+    await user.click(screen.getByRole("button", { name: /detect gpu now/i }));
+    expect(probeMutate.mock.calls.length).toBe(before + 1);
+  });
+
+  it("renders the VRAM warning when wanted MB exceeds detected total", () => {
+    render(
+      withProviders(
+        <Step6GPU
+          config={makeConfig({
+            embedding_model: "BAAI/bge-large-en-v1.5",
+            prejudge_model: "Qwen/Qwen2.5-14B-Instruct-AWQ",
+          })}
+        />,
+      ),
+    );
+    const warning = screen.getByTestId("vram-warning");
+    expect(warning.textContent).toMatch(/VRAM may be insufficient/i);
+    expect(warning.textContent).toMatch(/23600 MB/);
+    expect(warning.textContent).toMatch(/16303 MB/);
+  });
+
+  it("does not render the VRAM warning when fit is fine", () => {
+    render(withProviders(<Step6GPU config={makeConfig()} />));
+    expect(screen.queryByTestId("vram-warning")).not.toBeInTheDocument();
+  });
+
+  it("displays GPU name + VRAM total in the stat tiles", () => {
+    render(withProviders(<Step6GPU config={makeConfig()} />));
+    expect(screen.getByText(/NVIDIA RTX 4080/)).toBeInTheDocument();
+    expect(screen.getByText(/16303 MB/)).toBeInTheDocument();
   });
 });
