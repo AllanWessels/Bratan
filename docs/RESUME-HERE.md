@@ -114,6 +114,29 @@ uv run python scripts/loop.py --iterations 0 --no-agents   # baseline path
   + unit files for adapters / cache / budget / drift / ...
 ```
 
+## Operating note: fan test execution out to sub-agents
+
+Whenever a change touches more than a single module, run the verification
+in a sub-agent (`Agent` tool with `run_in_background: true`) rather than
+in-line. The full suite — pytest + vitest + Playwright + live ingest — is
+multi-minute and produces a lot of log spam (torch + huggingface +
+chromadb + vite); running it in the main conversation burns context and
+blocks the session.
+
+The pattern that works:
+1. Brief the sub-agent with a numbered checklist (e.g. the 10 checks
+   the "end-to-end verifier" uses).
+2. Tell it where credentials live (`.env`, gitignored).
+3. Use **don't-stop-until-PASS** semantics — the agent loops on fixes
+   until every check is green.
+4. The main session continues with other work and waits for the agent's
+   completion notification. Do NOT tail the agent's transcript file
+   (it overflows context per the system warning).
+
+This is why the "no such table: tenants" + stale Sonnet model id bugs
+slipped — they shipped without an end-to-end exercise against the live
+backend. The verifier pattern catches that class of bug.
+
 ## Decisions worth re-reading before changing things
 
 1. **Two configs.** `bratan.config.yaml` is user-owned (setup wizard).
