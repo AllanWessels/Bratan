@@ -83,31 +83,30 @@ async function flushAutoSave() {
 }
 
 describe("Step5SeedTarget", () => {
-  it("renders the number input with default value 50", () => {
+  it("renders the slider with default value 50", () => {
     render(withProviders(<Step5SeedTarget config={null} />));
-    const input = screen.getByLabelText(/target number of seed cases/i);
-    expect(input).toHaveValue(50);
+    const slider = screen.getByLabelText(/target number of seed cases/i);
+    expect(slider).toHaveValue("50");
   });
 
   it("populates from config.project.seed_target_n", () => {
     render(withProviders(<Step5SeedTarget config={makeConfig(125)} />));
-    const input = screen.getByLabelText(/target number of seed cases/i);
-    expect(input).toHaveValue(125);
+    const slider = screen.getByLabelText(/target number of seed cases/i);
+    expect(slider).toHaveValue("125");
   });
 
-  it("input has the numeric bounds 10..200 with step 1", () => {
+  it("slider has the range bounds 10..200 with step 5", () => {
     render(withProviders(<Step5SeedTarget config={null} />));
-    const input = screen.getByLabelText(/target number of seed cases/i);
-    expect(input).toHaveAttribute("type", "number");
-    expect(input).toHaveAttribute("min", "10");
-    expect(input).toHaveAttribute("max", "200");
-    expect(input).toHaveAttribute("step", "1");
+    const slider = screen.getByLabelText(/target number of seed cases/i);
+    expect(slider).toHaveAttribute("min", "10");
+    expect(slider).toHaveAttribute("max", "200");
+    expect(slider).toHaveAttribute("step", "5");
   });
 
   it("auto-saves edits wrapped as {project: {seed_target_n: ...}}", async () => {
     render(withProviders(<Step5SeedTarget config={null} />));
-    const input = screen.getByLabelText(/target number of seed cases/i);
-    fireEvent.change(input, { target: { value: "75" } });
+    const slider = screen.getByLabelText(/target number of seed cases/i);
+    fireEvent.change(slider, { target: { value: "75" } });
     await flushAutoSave();
     const saves = captured.filter((c) => c.url.includes("/api/setup/save-step"));
     expect(saves.length).toBeGreaterThan(0);
@@ -116,12 +115,5 @@ describe("Step5SeedTarget", () => {
     const data = (last.body as { data: { project: { seed_target_n: number } } }).data;
     expect(data).toHaveProperty("project");
     expect(data.project.seed_target_n).toBe(75);
-  });
-
-  it("renders the 'cases' unit suffix", () => {
-    render(withProviders(<Step5SeedTarget config={null} />));
-    expect(
-      screen.getByTestId("number-input-target-number-of-seed-cases-unit"),
-    ).toHaveTextContent("cases");
   });
 });

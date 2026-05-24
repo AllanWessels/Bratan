@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Card } from "@/components/Card";
-import { NumberInput } from "@/components/NumberInput";
+import { Slider } from "@/components/Slider";
 import type { BratanConfig, ProjectBasics } from "@/api/types";
 import { useAutoSaveStep } from "./useAutoSaveStep";
 
@@ -26,12 +26,11 @@ export function Step5SeedTarget({ config }: Props) {
       title="Seed target N"
       description="How many human-authored seed test cases to aim for. Loop will warn (not block) below target."
     >
-      <NumberInput
+      <Slider
         label="Target number of seed cases"
         min={10}
         max={200}
-        step={1}
-        unit="cases"
+        step={5}
         value={data.seed_target_n}
         onChange={(v) => setData({ ...data, seed_target_n: v })}
         hint="Default is 50. Recommended minimum is 30 to make per-category breakdowns meaningful."

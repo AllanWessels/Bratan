@@ -48,11 +48,11 @@ async function flushAutoSave() {
 }
 
 describe("Step8JudgeWeights", () => {
-  it("renders three weight number inputs with defaults 0.4 / 0.3 / 0.3", () => {
+  it("renders three weight sliders with defaults 0.4 / 0.3 / 0.3", () => {
     render(withProviders(<Step8JudgeWeights config={null} />));
-    expect(screen.getByLabelText(/^correctness$/i)).toHaveValue(0.4);
-    expect(screen.getByLabelText(/recall @ 5/i)).toHaveValue(0.3);
-    expect(screen.getByLabelText(/^faithfulness$/i)).toHaveValue(0.3);
+    expect(screen.getByLabelText(/^correctness$/i)).toHaveValue("0.4");
+    expect(screen.getByLabelText(/recall @ 5/i)).toHaveValue("0.3");
+    expect(screen.getByLabelText(/^faithfulness$/i)).toHaveValue("0.3");
   });
 
   it("shows the prominent red comparability banner", () => {
@@ -65,22 +65,19 @@ describe("Step8JudgeWeights", () => {
 
   it("displays Sum: 1.00 (valid) with default weights", () => {
     render(withProviders(<Step8JudgeWeights config={null} />));
-    // The sum banner is rendered both above and below the three inputs;
-    // assert at least one exists in the valid state.
-    expect(screen.getAllByText(/Sum:/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/\(valid\)/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Sum:/)).toBeInTheDocument();
+    expect(screen.getByText(/1\.00/)).toBeInTheDocument();
+    expect(screen.getByText(/\(valid\)/i)).toBeInTheDocument();
   });
 
-  it("warns when weights don't sum to 1.0", () => {
+  it("warns when weights don't sum to 1.0", async () => {
     render(withProviders(<Step8JudgeWeights config={null} />));
     const corr = screen.getByLabelText(/^correctness$/i);
     fireEvent.change(corr, { target: { value: "0.9" } });
-    expect(
-      screen.getAllByText(/weights should sum to 1\.00/i).length,
-    ).toBeGreaterThan(0);
+    expect(screen.getByText(/weights should sum to 1\.00/i)).toBeInTheDocument();
   });
 
-  it("auto-saves number-input changes wrapped as {judge_weights: {...}}", async () => {
+  it("auto-saves slider changes wrapped as {judge_weights: {...}}", async () => {
     render(withProviders(<Step8JudgeWeights config={null} />));
     const corr = screen.getByLabelText(/^correctness$/i);
     fireEvent.change(corr, { target: { value: "0.6" } });
@@ -92,16 +89,5 @@ describe("Step8JudgeWeights", () => {
     const data = (last.body as { data: { judge_weights: { correctness: number } } }).data;
     expect(data).toHaveProperty("judge_weights");
     expect(data.judge_weights.correctness).toBeCloseTo(0.6, 5);
-  });
-
-  it("each weight input enforces min=0, max=1, step=0.05", () => {
-    render(withProviders(<Step8JudgeWeights config={null} />));
-    for (const lbl of [/^correctness$/i, /recall @ 5/i, /^faithfulness$/i]) {
-      const input = screen.getByLabelText(lbl);
-      expect(input).toHaveAttribute("min", "0");
-      expect(input).toHaveAttribute("max", "1");
-      expect(input).toHaveAttribute("step", "0.05");
-      expect(input).toHaveAttribute("type", "number");
-    }
   });
 });

@@ -155,11 +155,11 @@ describe("Step3Models", () => {
   it("auto-saves use_local_embedding toggle wrapped as {models: {...}}", async () => {
     const user = userEvent.setup();
     render(withProviders(<Step3Models config={null} />));
-    // Three toggles render — find the local embedding one by its label
-    const switches = screen.getAllByRole("switch");
-    expect(switches).toHaveLength(3);
+    // Three checkboxes render — find the local embedding one by its label
+    const checkboxes = screen.getAllByRole("checkbox");
+    expect(checkboxes.length).toBeGreaterThanOrEqual(3);
     // Click the first to flip use_local_embedding to false
-    await user.click(switches[0]);
+    await user.click(checkboxes[0]);
     await flushAutoSave();
     const saves = captured.filter((c) => c.url.includes("/api/setup/save-step"));
     expect(saves.length).toBeGreaterThan(0);

@@ -3,6 +3,80 @@
 A self-improving RAG pipeline that gets better automatically through a
 red-team / blue-team / judge agent loop, with techniques captured as skills.
 
+> ## ⚡ OPERATING PRINCIPLE — VERIFY CLEAN STATE BEFORE HANDOFF
+>
+> **Before telling the user "ready, go retest", PROVE the state is clean.
+> Never guess. Run the actual commands and read the actual output.**
+>
+> Required pre-handoff checklist — every item must be confirmed by a real
+> command, not assumed:
+>
+> 1. `curl http://127.0.0.1:8000/api/health` → 200 + `{"ok":true}`
+> 2. `curl http://127.0.0.1:8000/api/setup/state` → `config_exists: false,
+>    setup_completed: false, completed_steps: []`
+> 3. `curl -I http://127.0.0.1:5173/` → 200
+> 4. `test -e bratan.config.yaml && echo STILL || echo gone` → `gone`
+> 5. `test -e .bratan-setup.json && echo STILL || echo gone` → `gone`
+> 6. `test -e .chroma && echo STILL || echo gone` → `gone`
+> 7. `test -e test_cases/seed.jsonl && echo STILL || echo gone` → `gone`
+> 8. `ls test_cases/.drafts/ test_cases/generated/` → empty (or only README)
+> 9. `ls reports/run-*.json reports/latest.json 2>&1` → "No such file"
+> 10. **Vite HMR currency check**: `curl -sS http://127.0.0.1:5173/src/<a
+>     recently-changed component>.tsx | head -5` matches the on-disk file.
+>     The user has been bitten by stale Vite modules; if served bytes
+>     differ from disk, restart Vite: `pkill -f "node.*vite"; npm run dev
+>     -- --port 5173 --host 127.0.0.1 &`.
+>
+> If ANY check fails, fix it before handing off. Saying "I think the state
+> is clean" is exactly the failure mode this rule exists to prevent.
+
+> ## ⚡ OPERATING PRINCIPLE — FIX FIRST, THEN TEST
+>
+> **Land every fix before running the test harness. NEVER ship code with
+> the goal of "let's see what the tests say" — that wastes the test
+> harness as a slow debugger and burns context on noisy failure logs from
+> bugs you already know about.**
+>
+> The order is always:
+>
+> 1. **Reproduce** the user's report in your head from the code.
+> 2. **Fix** the bug — all fixes for a logical unit go in together.
+>    Within this phase, fan out: separate agents for separate bugs, in
+>    parallel, on the same branch.
+> 3. **Run the harness** (pytest + vitest + Playwright + live integration)
+>    only after all in-flight fixes are committed. Fan out the harness
+>    too — never sequential.
+> 4. **Act** on harness reports. If they show a new bug, GOTO 2.
+>
+> The corollary: the harness is a verifier, not a debugger. Use `read` +
+> `grep` to debug; reserve test runs for proving a fix actually works.
+
+> ## ⚡ OPERATING PRINCIPLE — FAN OUT, ALWAYS
+>
+> **Default to parallel. Serial is the exception that requires
+> justification.**
+>
+> Every task that can be split MUST be split. Dispatch sub-agents via the
+> Agent tool with `run_in_background: true` for:
+>
+> - **Test runs** — pytest, vitest, Playwright, live ingest checks all in
+>   parallel. Never run them one-by-one in the main session.
+> - **Multi-component changes** — backend + frontend + tests as separate
+>   agents on a shared contract.
+> - **Verification cycles** — one agent per claim. Live-UI verifier,
+>   static-test verifier, audit verifier, fix agent — all at once.
+> - **Bug investigations** — a fix agent AND a verifier agent run in
+>   parallel; the fix may land before the verifier reports, or vice versa.
+>
+> The main conversation context is finite. Log spam from torch / chromadb /
+> vite fills it fast, and the user has been bitten by "I'll just do this
+> in-line" multiple times. **NEVER test your own code** — always dispatch a
+> verifier agent against a live system. Never claim a fix is shipped until
+> a verifier agent confirms it works in the real browser / real backend.
+>
+> If you find yourself running ONE thing at a time, you are doing it wrong.
+> Ask: "what could be running alongside this RIGHT NOW?" and dispatch it.
+
 ## What this project is
 
 This is not a wrapper around an existing RAG library. It is a workspace where

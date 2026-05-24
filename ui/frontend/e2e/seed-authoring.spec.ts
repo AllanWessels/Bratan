@@ -75,6 +75,12 @@ test.afterEach(() => {
 
 test("author a seed case and persist it to seed.jsonl", async ({ page }) => {
   await page.goto("/authoring");
+
+  // Round-3 made "From the corpus" the default authoring mode. This spec
+  // covers the question-first wizard's wire contract, so flip the tab
+  // before asserting on its heading.
+  await page.getByRole("tab", { name: /from a question/i }).click();
+
   await expect(page.getByRole("heading", { name: /author a case/i })).toBeVisible();
 
   // Verify our fixture is listed in the corpus browser.

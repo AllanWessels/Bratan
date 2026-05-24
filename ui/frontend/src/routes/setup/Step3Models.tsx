@@ -42,29 +42,25 @@ interface ToggleProps {
   hint?: string;
   checked: boolean;
   onChange: (v: boolean) => void;
+  testId?: string;
 }
 
-function Toggle({ label, hint, checked, onChange }: ToggleProps) {
+/**
+ * Plain checkbox. We had a fancy slide-switch here before; users found the
+ * slide-direction confusing and asked us to replace it with something
+ * universally understood. Checkboxes win: checked = on, unchecked = off,
+ * no animation.
+ */
+function Toggle({ label, hint, checked, onChange, testId }: ToggleProps) {
   return (
     <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 bg-white p-3 hover:bg-slate-50">
-      <button
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        onClick={() => onChange(!checked)}
-        className={cn(
-          "relative mt-0.5 h-5 w-9 shrink-0 rounded-full transition-colors",
-          checked ? "bg-brand-600" : "bg-slate-300",
-        )}
-      >
-        <span
-          className={cn(
-            "absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform",
-            checked ? "translate-x-4" : "translate-x-0.5",
-          )}
-          aria-hidden="true"
-        />
-      </button>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+        data-testid={testId}
+      />
       <div className="flex-1">
         <span className="text-sm font-medium text-slate-800">{label}</span>
         {hint && <p className="text-xs text-slate-500">{hint}</p>}
