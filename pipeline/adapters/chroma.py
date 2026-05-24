@@ -29,6 +29,13 @@ _RECOVERABLE_MARKERS = (
     "attempt to write a readonly database",
     "code: 1032",
     "unable to open database file",
+    # HNSW segment files are missing — chunks are in the SQLite metadata but
+    # the vector index isn't on disk. Happens when .chroma is partially wiped
+    # under a live client. We recover by nuking + reconnecting; the next
+    # operation against an empty collection returns gracefully.
+    "Nothing found on disk",
+    "Error creating hnsw segment reader",
+    "hnsw segment",
 )
 
 
@@ -123,13 +130,21 @@ class ChromaAdapter(VectorDBAdapter):
         )
 
     def vector_query(self, embedding: list[float], k: int) -> list[QueryHit]:
-        result = self._with_recovery(
-            lambda: self._collection.query(
-                query_embeddings=[embedding],
-                n_results=max(1, k),
-                include=["documents", "metadatas", "distances"],
+        try:
+            result = self._with_recovery(
+                lambda: self._collection.query(
+                    query_embeddings=[embedding],
+                    n_results=max(1, k),
+                    include=["documents", "metadatas", "distances"],
+                )
             )
-        )
+        except Exception as exc:
+            # Recovery just nuked + reconnected to an empty collection; a
+            # query against an empty collection returns empty hits, not 500.
+            if self.count() == 0:
+                logger.info("vector_query against empty collection after recovery: %s", exc)
+                return []
+            raise
         return _hits_from_chroma_result(result)
 
     def hybrid_query_if_supported(

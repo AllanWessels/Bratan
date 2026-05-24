@@ -1,9 +1,9 @@
-import { useEffect } from "react";
-import { Cpu, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { useEffect, useRef } from "react";
+import { Cpu, AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
 import { Card } from "@/components/Card";
 import { Button } from "@/components/Button";
 import { Spinner } from "@/components/Spinner";
-import { useProbe } from "@/api/hooks";
+import { useProbe, useSaveStep } from "@/api/hooks";
 import type { BratanConfig } from "@/api/types";
 import { cn } from "@/lib/cn";
 
@@ -48,12 +48,25 @@ interface BreakdownRow {
 
 export function Step6GPU({ config }: Props) {
   const probe = useProbe();
+  const saveStep = useSaveStep();
 
   // Probe on first mount
   useEffect(() => {
     probe.mutate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // This step has no inputs to persist — but the wizard tracks "completed"
+  // steps via save-step calls. Without firing one for step 6, the left-nav
+  // checkmark never lights up. Fire an empty-payload save once a probe
+  // result is in (regardless of success) so the user gets visible progress.
+  const markedDone = useRef(false);
+  useEffect(() => {
+    if (probe.isSuccess && !markedDone.current) {
+      markedDone.current = true;
+      saveStep.mutate({ step: 6, data: {} });
+    }
+  }, [probe.isSuccess, saveStep]);
 
   const data = probe.data;
 
@@ -88,12 +101,40 @@ export function Step6GPU({ config }: Props) {
 
   return (
     <div className="flex flex-col gap-6">
+      {data && (
+        <div
+          data-testid="gpu-detection-banner"
+          className={cn(
+            "flex items-center gap-3 rounded-2xl border p-4",
+            data.gpu.detected
+              ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+              : "border-amber-300 bg-amber-50 text-amber-900",
+          )}
+        >
+          {data.gpu.detected ? (
+            <CheckCircle2 className="h-6 w-6 shrink-0" />
+          ) : (
+            <XCircle className="h-6 w-6 shrink-0" />
+          )}
+          <div>
+            <p className="font-semibold">
+              {data.gpu.detected ? "GPU detected" : "No GPU detected"}
+            </p>
+            <p className="text-sm">
+              {data.gpu.detected
+                ? `${data.gpu.name} — ${data.gpu.vram_total_mb} MB VRAM (${data.gpu.vram_free_mb} MB free)`
+                : "nvidia-smi wasn't reachable. Local models will fall back to CPU (slow) or fail to start. You can flip 'use local' OFF for each component in Step 3 to route everything through the API instead."}
+            </p>
+          </div>
+        </div>
+      )}
+
       <Card
         title="GPU detection"
         description="We probe nvidia-smi and your vLLM endpoint to verify the local stack is ready."
         footer={
           <Button onClick={() => probe.mutate()} loading={probe.isPending} variant="secondary">
-            Detect GPU now
+            {data ? "Re-detect" : "Detect GPU now"}
           </Button>
         }
       >

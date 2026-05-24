@@ -130,6 +130,60 @@ def test_with_recovery_recognizes_readonly_database(adapter: ChromaAdapter) -> N
     assert any(marker in err for marker in _RECOVERABLE_MARKERS)
 
 
+def test_with_recovery_recognizes_hnsw_segment_missing(adapter: ChromaAdapter) -> None:
+    """Regression: user's HTTP 500 on corpus search after .chroma was wiped.
+
+    The exact error: chromadb returned 'Internal error: Error creating hnsw segment
+    reader: Nothing found on disk' because the SQLite metadata still pointed at
+    HNSW segment files that no longer existed on disk. Must be classified
+    recoverable so the adapter can re-init from a clean slate.
+    """
+    from pipeline.adapters.chroma import _RECOVERABLE_MARKERS
+
+    err = (
+        "Error executing plan: Internal error: Error creating hnsw segment "
+        "reader: Nothing found on disk"
+    )
+    assert any(marker in err for marker in _RECOVERABLE_MARKERS)
+
+
+def test_vector_query_returns_empty_after_segment_loss(
+    adapter: ChromaAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When chromadb raises the HNSW-segment-missing error, vector_query
+    must return [] (not 500). Regression for the HTTP 500 the user saw on
+    corpus search after .chroma was wiped under a live client.
+
+    We inject the exact error chromadb produced via the underlying query
+    bindings since the in-process recovery flow can't naturally trigger it
+    (chromadb's Rust bindings keep some state cached even when the on-disk
+    HNSW files vanish)."""
+
+    # Make the underlying collection.query raise the user's exact error string.
+    state = {"called": 0}
+
+    real_query = adapter._collection.query
+
+    def boom_then_empty(**kwargs):
+        state["called"] += 1
+        if state["called"] == 1:
+            raise Exception(
+                "Error executing plan: Internal error: Error creating hnsw "
+                "segment reader: Nothing found on disk"
+            )
+        return real_query(**kwargs)
+
+    monkeypatch.setattr(adapter._collection, "query", boom_then_empty)
+    # Pretend recovery succeeds and leaves the adapter pointing at an empty
+    # collection (which is what happens when _recover nukes the path).
+    monkeypatch.setattr(adapter, "_recover", lambda: None)
+    monkeypatch.setattr(adapter, "count", lambda: 0)
+
+    # vector_query must return [] gracefully, NOT raise.
+    hits = adapter.vector_query([1.0, 0.0], k=3)
+    assert hits == []
+
+
 def test_with_recovery_retries_then_succeeds(adapter: ChromaAdapter) -> None:
     """A recoverable error followed by success must return the success value."""
     state = {"calls": 0}

@@ -6,6 +6,7 @@ import type { BratanConfig, ProbeResult } from "@/api/types";
 
 const mocks = vi.hoisted(() => ({
   useProbe: vi.fn(),
+  useSaveStep: vi.fn(),
 }));
 
 vi.mock("@/api/hooks", () => mocks);
@@ -74,8 +75,10 @@ describe("Step6GPU VRAM math", () => {
       data: sampleProbe,
       mutate: vi.fn(),
       isPending: false,
+      isSuccess: true,
       isError: false,
     });
+    mocks.useSaveStep.mockReturnValue({ mutate: vi.fn() });
   });
 
   it("only counts models that are toggled ON", () => {
@@ -144,26 +147,28 @@ describe("Step6GPU VRAM math", () => {
     expect(screen.getByTestId("vram-mb-prejudge")).toHaveTextContent("5000 MB");
   });
 
-  it("renders the 'Detect GPU now' button", () => {
+  it("renders the probe button (label is 'Re-detect' once a probe completed)", () => {
     render(withProviders(<Step6GPU config={makeConfig()} />));
+    // With sample probe data already present, the button label is "Re-detect".
     expect(
-      screen.getByRole("button", { name: /detect gpu now/i }),
+      screen.getByRole("button", { name: /re-detect/i }),
     ).toBeInTheDocument();
   });
 
-  it("invokes the probe mutation when 'Detect GPU now' is clicked", async () => {
+  it("invokes the probe mutation when the button is clicked", async () => {
     const probeMutate = vi.fn();
     mocks.useProbe.mockReturnValue({
       data: sampleProbe,
       mutate: probeMutate,
       isPending: false,
+      isSuccess: true,
       isError: false,
     });
     const user = userEvent.setup();
     render(withProviders(<Step6GPU config={makeConfig()} />));
     // The mount-effect already triggered one call; clicking should add another.
     const before = probeMutate.mock.calls.length;
-    await user.click(screen.getByRole("button", { name: /detect gpu now/i }));
+    await user.click(screen.getByRole("button", { name: /re-detect/i }));
     expect(probeMutate.mock.calls.length).toBe(before + 1);
   });
 
@@ -191,7 +196,57 @@ describe("Step6GPU VRAM math", () => {
 
   it("displays GPU name + VRAM total in the stat tiles", () => {
     render(withProviders(<Step6GPU config={makeConfig()} />));
-    expect(screen.getByText(/NVIDIA RTX 4080/)).toBeInTheDocument();
-    expect(screen.getByText(/16303 MB/)).toBeInTheDocument();
+    // GPU name appears in both the detection banner AND the stat tile.
+    expect(screen.getAllByText(/NVIDIA RTX 4080/).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/16303 MB/).length).toBeGreaterThanOrEqual(1);
+  });
+
+  // ---- Regression for user-reported bugs (2026-05-24) ----
+
+  it("shows the GREEN detection banner when a GPU is detected", () => {
+    render(withProviders(<Step6GPU config={makeConfig()} />));
+    const banner = screen.getByTestId("gpu-detection-banner");
+    expect(banner.textContent).toMatch(/GPU detected/i);
+    expect(banner.textContent).toMatch(/NVIDIA RTX 4080/);
+    // green styling
+    expect(banner.className).toMatch(/emerald/);
+  });
+
+  it("shows the AMBER 'no GPU' banner when probe reports detected=false", () => {
+    mocks.useProbe.mockReturnValue({
+      data: {
+        ...sampleProbe,
+        gpu: { detected: false, name: null, vram_total_mb: null, vram_free_mb: null },
+      },
+      mutate: vi.fn(),
+      isPending: false,
+      isSuccess: true,
+      isError: false,
+    });
+    render(withProviders(<Step6GPU config={makeConfig()} />));
+    const banner = screen.getByTestId("gpu-detection-banner");
+    expect(banner.textContent).toMatch(/No GPU detected/i);
+    expect(banner.className).toMatch(/amber/);
+  });
+
+  it("auto-probes on mount", () => {
+    const probeMutate = vi.fn();
+    mocks.useProbe.mockReturnValue({
+      data: undefined,
+      mutate: probeMutate,
+      isPending: false,
+      isSuccess: false,
+      isError: false,
+    });
+    render(withProviders(<Step6GPU config={makeConfig()} />));
+    expect(probeMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks step 6 complete via save-step once probe finishes", () => {
+    const saveMutate = vi.fn();
+    mocks.useSaveStep.mockReturnValue({ mutate: saveMutate });
+    render(withProviders(<Step6GPU config={makeConfig()} />));
+    // probe is mocked as already isSuccess in beforeEach → effect should fire
+    expect(saveMutate).toHaveBeenCalledWith({ step: 6, data: {} });
   });
 });

@@ -201,11 +201,35 @@ export function Step3Models({ config }: Props) {
       </Card>
 
       <Card
-        title="Local vLLM endpoint"
-        description="Used for the pre-judge model in inner-loop iterations."
+        title="Local vLLM endpoint (optional)"
+        description={
+          <>
+            Only used if <strong>"Local pre-judge"</strong> is toggled ON above.
+            The pre-judge is a small, local model that grades cases cheaply
+            during inner-loop iterations — the oracle (Anthropic Sonnet 4) still
+            grades anything that affects the final report. If you leave the
+            pre-judge OFF, you can ignore this section entirely; the loop just
+            uses the oracle for every grade, costing more but skipping the
+            local-model setup.
+          </>
+        }
       >
         <div className="grid grid-cols-1 gap-5">
-          <Field label="Base URL">
+          <Field
+            label="Base URL"
+            hint={
+              <>
+                URL of a running vLLM (or OpenAI-compatible) server on your machine
+                or LAN. Default <code>http://localhost:8001</code> assumes you've
+                started one with e.g.{" "}
+                <code>vllm serve Qwen/Qwen2.5-7B-Instruct-AWQ --port 8001</code>.
+                If you haven't, the Test will return an{" "}
+                <span className="font-medium text-amber-700">amber warning</span>{" "}
+                — that's expected and safe to ignore as long as Local pre-judge
+                stays OFF.
+              </>
+            }
+          >
             {(id) => (
               <div className="flex gap-2">
                 <TextInput
@@ -244,6 +268,13 @@ export function Step3Models({ config }: Props) {
               </span>
             )}
           </div>
+          {!data.use_local_prejudge && (
+            <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              You don't need vLLM right now — "Local pre-judge" is OFF, so the
+              loop will use the Anthropic oracle for every grade. Leave the URL
+              and a failing Test alone; you can enable this later from Settings.
+            </p>
+          )}
 
           <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
             <Field label="Pre-judge model">

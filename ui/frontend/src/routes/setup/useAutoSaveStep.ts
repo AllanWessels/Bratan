@@ -13,7 +13,9 @@ const STEP_KEY: Record<number, string | null> = {
   3: "models",         // ModelConfig
   4: "cost",           // CostCeilings
   5: "project",        // ProjectBasics (seed_target_n lives here too)
-  6: null,             // GPU detection step — no auto-save
+  6: null,             // GPU detection step — no auto-save *via this hook*;
+                       // Step6GPU.tsx fires save-step({step:6, data:{}}) once
+                       // a probe completes so the left-nav checkmark lights up.
   7: "stop",           // StopCriteria
   8: "judge_weights",  // JudgeWeights
 };

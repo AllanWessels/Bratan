@@ -188,4 +188,38 @@ describe("Step3Models", () => {
     const testButtons = screen.getAllByRole("button", { name: /^test$/i });
     expect(testButtons[0]).toBeDisabled();
   });
+
+  // ---- Regression for user-reported vLLM section confusion (2026-05-24) ----
+
+  it("vLLM section spells out that it is OPTIONAL", () => {
+    const { container } = render(withProviders(<Step3Models config={null} />));
+    expect(screen.getByText(/Local vLLM endpoint \(optional\)/i)).toBeInTheDocument();
+    // Description is split across multiple nodes (incl. <strong>). Verify
+    // the body text in flattened form.
+    const flat = (container.textContent ?? "").replace(/\s+/g, " ");
+    expect(flat).toMatch(/Only used if/i);
+    expect(flat).toMatch(/Local pre-judge/i);
+    expect(flat).toMatch(/toggled ON/i);
+  });
+
+  it("vLLM Base URL hint explains what amber means", () => {
+    render(withProviders(<Step3Models config={null} />));
+    // The hint copy mentions the amber warning explicitly.
+    const hintMatch = screen.getByText(/amber warning/i);
+    expect(hintMatch).toBeInTheDocument();
+  });
+
+  it("renders a 'you don't need vLLM right now' callout when prejudge toggle is OFF", async () => {
+    const user = userEvent.setup();
+    render(withProviders(<Step3Models config={null} />));
+    // The default config has use_local_prejudge = true, so the callout is hidden.
+    expect(
+      screen.queryByText(/You don't need vLLM right now/i),
+    ).not.toBeInTheDocument();
+    // Toggle the pre-judge OFF.
+    const prejudgeToggle = screen.getByLabelText(/Local pre-judge/i);
+    await user.click(prejudgeToggle);
+    // Now the explanatory callout should appear.
+    expect(screen.getByText(/You don't need vLLM right now/i)).toBeInTheDocument();
+  });
 });
