@@ -52,27 +52,13 @@ live run with `--budget-usd 1.0` as a safety net.
    plus `cd ui/frontend && npm test`. The harness is in place; CI
    should just gate PRs.
 
-## Pending docs change — language: "portfolio" → "closed-loop"
+## Docs change DONE — language: "portfolio" → "closed-loop"
 
-The framing currently used in `docs/RATIONALE.md` and `README.md` —
-*"production RAG is a portfolio of techniques"* — should be reworded
-across the documentation to position Bratan as a **closed-loop** system
-rather than a portfolio. "Closed-loop" is the more accurate frame: it
-captures the feedback dynamic (red → blue → judge → red) that makes the
-project structurally different from a static stack of techniques.
-
-Specific places to sweep (search before editing — there may be more):
-- `README.md` — the hero paragraph and the "Why Bratan exists" section
-  (the central design question is currently phrased *"how do you
-  accumulate techniques over time"* — reframe around closing the loop).
-- `docs/RATIONALE.md` — every occurrence of "portfolio", especially the
-  opening "starting premise" section.
-- `CLAUDE.md` — check for any "portfolio" framing.
-- The agents' `AGENTS.md` files — unlikely to use the word, but verify.
-
-Do NOT rename the SKILL.md files or the agent lanes — the language
-change is purely about the *project pitch*, not the architecture
-vocabulary. Skills still accumulate; that part of the story stays.
+The "portfolio of techniques" framing was reworded across `README.md`,
+`docs/RATIONALE.md`, and `CLAUDE.md` (M5 docs+CI pass). The agents'
+`AGENTS.md` files were checked and didn't use the word. Skills still
+accumulate; that part of the story stays. SKILL.md files and agent
+lane names were not renamed.
 
 ## Git state
 

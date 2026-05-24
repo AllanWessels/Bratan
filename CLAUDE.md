@@ -148,7 +148,8 @@ told the same in their AGENTS.md files. Do not work around them.
 
 The conceptual basis for this project is captured in `docs/RATIONALE.md`,
 which traces why the architecture looks the way it does (the short version:
-production RAG is a portfolio of techniques addressing specific failure
-modes; the right architecture is one that lets agents accumulate techniques
-as markdown over time). Read it once before making structural changes; you
-don't need it day-to-day.
+a RAG only keeps improving when there's a closed feedback loop between an
+adversarial test generator, a hypothesis-driven engineer, and a stable
+judge; the right architecture is one that closes that loop and lets the
+agents accumulate techniques as markdown as a side effect). Read it once
+before making structural changes; you don't need it day-to-day.

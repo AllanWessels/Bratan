@@ -6,16 +6,24 @@ need it for day-to-day work.
 
 ## The starting premise
 
-Production RAG is not a pipeline, it's a portfolio of techniques. Every
-real system in production layers on hybrid retrieval, query rewriting,
-contextual chunk enrichment, reranking, citation verification, adaptive
-retrieval, metadata filtering, and a dozen smaller refinements. Each
-technique exists because it addresses a specific failure mode that
-showed up in evaluation.
+The only way a RAG keeps improving is a **closed feedback loop** between
+adversarial test generation, hypothesis-driven engineering, and a stable
+judge. Without that loop, every system converges to a local optimum on
+whatever eval set its authors wrote down on day one and then stops
+moving. The techniques you've heard of — hybrid retrieval, query
+rewriting, contextual chunk enrichment, reranking, citation
+verification, adaptive retrieval, metadata filtering, and a dozen
+smaller refinements — are individually well-understood. What's missing
+in most production systems isn't a technique. It's the loop that would
+tell you *which* technique to reach for next and *whether* the last one
+you tried actually helped.
 
-Once you accept that the system is a portfolio, the central design
-question becomes: **how do you accumulate techniques over time without
-the system collapsing into entropy?**
+So the central design question becomes: **how do you close the loop —
+red → blue → judge → red — so it keeps producing real improvement
+instead of overfitting to a static eval?** A *consequence* of running
+the loop is that techniques accumulate over time (every SKILL.md is a
+technique the blue team picked up because the loop's reports told it
+to). But the techniques are the output. The loop is the premise.
 
 ## Approaches considered
 

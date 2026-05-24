@@ -1,7 +1,8 @@
 # Bratan — Self-Improving RAG That Actually Gets Better
 
-> **Production RAG isn't a pipeline. It's a portfolio of techniques.**
-> Bratan is the workspace where that portfolio compounds.
+> **A RAG only keeps getting better when there's a closed feedback loop
+> between the thing that breaks it, the thing that fixes it, and the thing
+> that scores it.** Bratan is the workspace where that loop runs.
 
 Bratan (Russian: *брат* — *brother*) is a self-improving Retrieval-Augmented
 Generation framework built on an adversarial three-agent loop:
@@ -47,20 +48,32 @@ citation verification, hyperparameters — and keeps making it better.
 
 ### The premise everyone's working around
 
-Every production RAG system in 2026 is **a portfolio of techniques layered
-on top of each other** — hybrid retrieval, query rewriting, contextual
-chunk enrichment, reranking, citation verification, adaptive retrieval,
-metadata filtering, structured-output coercion, and a dozen smaller
-refinements. Each one exists because *some specific failure mode showed up
-in eval and someone wrote a paper about it*.
+Production RAG systems in 2026 don't stop improving because the techniques
+ran out. They stop improving because the *feedback loop* breaks. Someone
+ships hybrid retrieval, the eval scores go up, the eval set stops moving,
+and six months later the pipeline is overfit to the same fifty questions
+the team wrote on a Tuesday in spring. The techniques accumulated; the
+adversarial pressure didn't.
 
-Once you accept that the system is a portfolio, the central design question
-becomes:
+The only way a RAG keeps improving is a **closed loop** between three
+things that don't trust each other:
 
-> **How do you accumulate techniques over time without the system
-> collapsing into entropy?**
+1. an adversarial test-case generator that gets harder *because* the
+   pipeline got better,
+2. a hypothesis-driven engineer that changes one thing at a time and
+   measures, and
+3. a stable judge that won't grade itself.
 
-That's the question Bratan answers.
+So the central design question becomes:
+
+> **How do you close the loop — red → blue → judge → red — so it keeps
+> producing real improvement, instead of overfitting to a static eval?**
+
+That's the question Bratan answers. Techniques (hybrid retrieval, query
+rewriting, contextual enrichment, reranking, citation verification, etc.)
+still accumulate as the loop runs — they live as `SKILL.md` files that the
+blue team picks up on demand. But the accumulation is a *consequence* of
+the loop, not the premise. The premise is the loop.
 
 ### Why existing approaches fall short
 

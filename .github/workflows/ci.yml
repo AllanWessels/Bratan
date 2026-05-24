@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: lint + pytest + frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Cache uv downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-
+
+      - name: Sync Python deps (skip vllm)
+        run: uv sync --all-extras --no-install-package vllm
+
+      - name: Ruff
+        run: uv run ruff check .
+
+      - name: Pytest
+        run: uv run pytest tests/ -q --maxfail=3
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Cache frontend node_modules
+        uses: actions/cache@v4
+        with:
+          path: ui/frontend/node_modules
+          key: ${{ runner.os }}-node20-${{ hashFiles('ui/frontend/package-lock.json', 'ui/frontend/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node20-
+
+      - name: Frontend install
+        working-directory: ui/frontend
+        run: npm install
+
+      - name: Frontend typecheck
+        working-directory: ui/frontend
+        run: npm run typecheck
+
+      - name: Frontend build
+        working-directory: ui/frontend
+        run: npm run build
+
+      - name: Frontend tests
+        working-directory: ui/frontend
+        run: npm test
