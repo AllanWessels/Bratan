@@ -26,6 +26,10 @@ red-team / blue-team / judge agent loop, with techniques captured as skills.
 >     The user has been bitten by stale Vite modules; if served bytes
 >     differ from disk, restart Vite: `pkill -f "node.*vite"; npm run dev
 >     -- --port 5173 --host 127.0.0.1 &`.
+> 11. Chroma query round-trip: `curl -sf POST /api/corpus/search` with a
+>     one-token query must return HTTP 200, not 500. Repeats after
+>     pkill+restart. This catches stale in-memory clients that disk wipes
+>     don't clear.
 >
 > If ANY check fails, fix it before handing off. Saying "I think the state
 > is clean" is exactly the failure mode this rule exists to prevent.
@@ -76,6 +80,25 @@ red-team / blue-team / judge agent loop, with techniques captured as skills.
 >
 > If you find yourself running ONE thing at a time, you are doing it wrong.
 > Ask: "what could be running alongside this RIGHT NOW?" and dispatch it.
+
+> ## ⚡ VERIFIER STATE ≠ USER STATE
+>
+> The verifier resets state for its own run cycle. The user does not. When
+> verifier and user share the same uvicorn process, every bit of in-memory
+> state poisoning the verifier creates flows straight to the user's next
+> session — and "passing tests" mean nothing.
+>
+> **End every verifier run with these steps, in order:**
+> 1. `rm -rf .chroma bratan.config.yaml` — disk wipe
+> 2. `pkill -9 -f "uvicorn.*ui.backend.app"` — kill the FastAPI process so
+>    no chromadb in-memory client survives
+> 3. Restart uvicorn fresh
+> 4. `curl -sf http://localhost:8005/api/corpus/search -d '{"query":"x","k":1}' -H "Content-Type: application/json"` — round-trip must return 200 (not 500), even with empty corpus
+>
+> Do not hand back control to the user until step 4 returns 200. The
+> "no such table: tenants/databases" and "Nothing found on disk" errors
+> are all the same root cause: a stale chromadb client surviving a disk
+> wipe. The only reliable fix is process-level restart.
 
 ## What this project is
 

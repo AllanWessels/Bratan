@@ -137,6 +137,37 @@ This is why the "no such table: tenants" + stale Sonnet model id bugs
 slipped — they shipped without an end-to-end exercise against the live
 backend. The verifier pattern catches that class of bug.
 
+## Common state-poisoning failures
+
+ChromaDB holds in-process singleton state. Wiping `.chroma/` on disk does
+**not** clear the in-memory client. Verifier agents run Playwright with
+`reuseExistingServer: true` and share the user's dev backend — so any
+in-memory poisoning from a verifier cycle flows straight into the user's
+next session.
+
+**Symptom catalogue — all the same root cause (stale chromadb client
+surviving a disk wipe):**
+
+- `OperationalError: no such table: tenants`
+- `OperationalError: no such table: databases`
+- `Nothing found on disk` (chroma persistence path mismatch)
+- `dim mismatch` (collection was created against a different embedding
+  model than the live config now points at)
+
+**Recovery recipe** (run in order, do not skip steps):
+
+1. `curl -sf -X POST http://localhost:8005/api/system/reset-vector-store`
+   — clears the in-memory client where the backend supports it.
+2. `pkill -9 -f "uvicorn.*ui.backend.app"` — kill the FastAPI process so
+   any surviving chromadb singleton is gone.
+3. `rm -rf .chroma bratan.config.yaml .bratan-setup.json` — disk wipe.
+4. Restart uvicorn fresh.
+5. `curl -sf http://localhost:8005/api/corpus/search -d '{"query":"x","k":1}' -H "Content-Type: application/json"`
+   — must return HTTP 200 (not 500), even against an empty corpus.
+
+If step 5 returns 500, GOTO step 2. The "reset endpoint" alone is not
+sufficient — process-level restart is the only reliable fix.
+
 ## Decisions worth re-reading before changing things
 
 1. **Two configs.** `bratan.config.yaml` is user-owned (setup wizard).
