@@ -32,6 +32,11 @@ reports/.wip/
 # Generated test cases stay in git; ephemeral drafts do not
 test_cases/.drafts/
 
+# Corpus is user data, not project artifact. Only the docs anchor is tracked.
+corpus/*
+!corpus/README.md
+!corpus/.gitkeep
+
 # UI
 ui/frontend/node_modules/
 ui/frontend/dist/
@@ -39,6 +44,8 @@ ui/frontend/.vite/
 ui/frontend/coverage/
 ui/frontend/.tsbuildinfo-node/
 ui/frontend/*.tsbuildinfo
+ui/frontend/test-results/
+ui/frontend/playwright-report/
 ui/backend/.cache/
 
 # Caches

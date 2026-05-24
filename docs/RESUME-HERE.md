@@ -15,8 +15,11 @@ Anthropic key (which requires the user to author seed cases first).
 | **M4 — optimization-method skills** | ✅ Done | Four `SKILL.md` files (ablation / grid-sweep / bayesian-optimization / particle-swarm) + `scripts/sweep.py` shared runner with grid / ablation / bayesian strategies and oracle-validation of winners |
 | **M5 — polish + extra adapters + CI** | ✅ Done | Functional Qdrant adapter (in-memory hermetic tests), `.github/workflows/ci.yml`, `docs/metrics.md` (467-line prose), the "portfolio → closed-loop" language sweep, dashboard polish (M5 nice-to-have left: Pinecone/Weaviate/pgvector adapters; chart drill-down). |
 
-**Test suite:** 140 backend (1 GPU-skipped) + 38 frontend = **178 tests**.
-`make test` runs both in ~5s. `.github/workflows/ci.yml` gates PRs.
+**Test suite:** 140 backend (1 GPU-skipped) + 38 frontend unit + 2 Playwright
+E2E = **180 tests**. `make test` runs all three layers (E2E adds ~30s
+locally, ~3min on a cold CI runner including browser install).
+`.github/workflows/ci.yml` gates PRs and uploads the Playwright HTML report
+on failure.
 
 ## The only thing not yet exercised
 
@@ -65,8 +68,11 @@ uv run python scripts/loop.py --iterations 0 --no-agents   # baseline path
   adapters/
     base.py        ChunkRecord + QueryHit + ABC
     chroma.py      ✅ default
-    qdrant.py      ✅ functional (hermetic in-memory tests)     ← M5
-    pinecone.py / weaviate.py / pgvector.py    stubs
+    qdrant.py      ✅ functional (hermetic in-memory tests)
+    pinecone.py    ✅ functional (recording mock; Pinecone has no in-mem mode)
+    weaviate.py    ✅ functional + native hybrid (recording mock)
+    pgvector.py    ✅ functional (recording mock pinning SQL shape)
+    (custom backends: see docs/custom-adapter.md, wired via "Other" wizard option)
   prompts/generation.md
   config.yaml     blue-team's lane
   CHANGELOG.md
