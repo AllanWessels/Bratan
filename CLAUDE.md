@@ -95,7 +95,7 @@ threshold across 5 consecutive iterations.
 
 ## Important defaults
 
-- LLM for agents: Claude Sonnet 4 (model id `claude-sonnet-4-20250514`)
+- LLM for agents: Claude Sonnet 4 (model id `claude-sonnet-4-6`)
 - LLM for judge: Claude Sonnet 4 (DO NOT downgrade — judge reliability
   is the load-bearing assumption of the whole loop)
 - Embedding model: Voyage `voyage-3` (configurable in `/pipeline/config.yaml`)
