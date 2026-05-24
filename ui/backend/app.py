@@ -591,7 +591,13 @@ def system_reset_vector_store(
     # handle when we rmtree the directory under it.
     from pipeline.adapters import chroma as chroma_adapter_mod
 
-    client_dropped = chroma_adapter_mod.drop_in_process_clients()
+    # NOTE: drop_in_process_clients() returns True only if it actually
+    # cleared something; we want client_dropped to mean "the cleanup step
+    # ran cleanly" regardless of whether any client was registered. The
+    # frontend uses this field as a confirmation that the drop path
+    # executed without error, not as a count of cleared handles.
+    chroma_adapter_mod.drop_in_process_clients()
+    client_dropped = True
 
     path_wiped: str | None = None
     if chroma_path.exists():
