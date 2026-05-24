@@ -3,6 +3,27 @@
 A self-improving RAG pipeline that gets better automatically through a
 red-team / blue-team / judge agent loop, with techniques captured as skills.
 
+> ## ⚡ OPERATING PRINCIPLE — FIX FIRST, THEN TEST
+>
+> **Land every fix before running the test harness. NEVER ship code with
+> the goal of "let's see what the tests say" — that wastes the test
+> harness as a slow debugger and burns context on noisy failure logs from
+> bugs you already know about.**
+>
+> The order is always:
+>
+> 1. **Reproduce** the user's report in your head from the code.
+> 2. **Fix** the bug — all fixes for a logical unit go in together.
+>    Within this phase, fan out: separate agents for separate bugs, in
+>    parallel, on the same branch.
+> 3. **Run the harness** (pytest + vitest + Playwright + live integration)
+>    only after all in-flight fixes are committed. Fan out the harness
+>    too — never sequential.
+> 4. **Act** on harness reports. If they show a new bug, GOTO 2.
+>
+> The corollary: the harness is a verifier, not a debugger. Use `read` +
+> `grep` to debug; reserve test runs for proving a fix actually works.
+
 > ## ⚡ OPERATING PRINCIPLE — FAN OUT, ALWAYS
 >
 > **Default to parallel. Serial is the exception that requires
