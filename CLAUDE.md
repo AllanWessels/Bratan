@@ -3,6 +3,32 @@
 A self-improving RAG pipeline that gets better automatically through a
 red-team / blue-team / judge agent loop, with techniques captured as skills.
 
+> ## ⚡ OPERATING PRINCIPLE — FAN OUT, ALWAYS
+>
+> **Default to parallel. Serial is the exception that requires
+> justification.**
+>
+> Every task that can be split MUST be split. Dispatch sub-agents via the
+> Agent tool with `run_in_background: true` for:
+>
+> - **Test runs** — pytest, vitest, Playwright, live ingest checks all in
+>   parallel. Never run them one-by-one in the main session.
+> - **Multi-component changes** — backend + frontend + tests as separate
+>   agents on a shared contract.
+> - **Verification cycles** — one agent per claim. Live-UI verifier,
+>   static-test verifier, audit verifier, fix agent — all at once.
+> - **Bug investigations** — a fix agent AND a verifier agent run in
+>   parallel; the fix may land before the verifier reports, or vice versa.
+>
+> The main conversation context is finite. Log spam from torch / chromadb /
+> vite fills it fast, and the user has been bitten by "I'll just do this
+> in-line" multiple times. **NEVER test your own code** — always dispatch a
+> verifier agent against a live system. Never claim a fix is shipped until
+> a verifier agent confirms it works in the real browser / real backend.
+>
+> If you find yourself running ONE thing at a time, you are doing it wrong.
+> Ask: "what could be running alongside this RIGHT NOW?" and dispatch it.
+
 ## What this project is
 
 This is not a wrapper around an existing RAG library. It is a workspace where
