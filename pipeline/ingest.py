@@ -299,6 +299,16 @@ def start_ingest_task(cfg: BratanConfig) -> IngestStatus:
         # we let the flag leak through, ChromaAdapter would refuse upserts
         # with the defensive guard added alongside the query worker.
         child_env = {k: v for k, v in os.environ.items() if k != "BRATAN_CHROMA_SUBPROCESS_QUERY"}
+        # Prepend project_root to PYTHONPATH so `python -m scripts.ingest_worker`
+        # resolves regardless of how the parent was launched. Under uvicorn
+        # PYTHONPATH is set at startup and cwd alone happens to suffice; under
+        # pytest neither is reliably true and the child exits with
+        # ModuleNotFoundError. Belt-and-suspenders alongside cwd= so both
+        # spawn paths work without depending on caller-supplied env.
+        existing_pythonpath = child_env.get("PYTHONPATH", "")
+        child_env["PYTHONPATH"] = (
+            str(project_root) + (os.pathsep + existing_pythonpath if existing_pythonpath else "")
+        )
         try:
             proc = subprocess.Popen(
                 cmd,

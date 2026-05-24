@@ -302,6 +302,17 @@ class ChromaAdapter(VectorDBAdapter):
         # Strip our own env flag from the child so we never recurse. The
         # worker scrubs it again as belt-and-braces.
         child_env = {k: v for k, v in os.environ.items() if k != _SUBPROCESS_QUERY_ENV}
+        # Prepend project_root to PYTHONPATH so `python -m scripts.query_worker`
+        # resolves regardless of how the parent was launched. Under uvicorn
+        # PYTHONPATH is set at startup and cwd alone happens to suffice; under
+        # pytest neither is reliably true and the child exits with
+        # ModuleNotFoundError. Belt-and-suspenders: set cwd AND PYTHONPATH so
+        # both spawn paths work without depending on caller-supplied env.
+        project_root = self._project_root()
+        existing_pythonpath = child_env.get("PYTHONPATH", "")
+        child_env["PYTHONPATH"] = (
+            str(project_root) + (os.pathsep + existing_pythonpath if existing_pythonpath else "")
+        )
 
         try:
             proc = subprocess.run(
@@ -309,7 +320,7 @@ class ChromaAdapter(VectorDBAdapter):
                 input=json.dumps(request),
                 capture_output=True,
                 text=True,
-                cwd=str(self._project_root()),
+                cwd=str(project_root),
                 env=child_env,
                 # Reads should be quick; cap at 60s so a wedged worker can't
                 # hang the request indefinitely.
