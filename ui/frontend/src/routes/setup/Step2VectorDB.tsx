@@ -4,6 +4,7 @@ import { Card } from "@/components/Card";
 import { Field, TextInput } from "@/components/Field";
 import { Button } from "@/components/Button";
 import { ConnectionBadge } from "@/components/ConnectionBadge";
+import { ResetVectorStoreButton } from "@/components/ResetVectorStoreButton";
 import { useTestVectorDB } from "@/api/hooks";
 import type { BratanConfig, VectorDBAdapter, VectorDBConfig } from "@/api/types";
 import { cn } from "@/lib/cn";
@@ -369,6 +370,24 @@ export function Step2VectorDB({ config }: Props) {
           <span className="text-xs text-red-600">{testMutation.data.error}</span>
         )}
       </div>
+
+      {/* Destructive recovery action — sits under Test connection because
+          that's where the user lands when the store is in a bad state and
+          they want to start over from a clean slate. Only meaningful for
+          the chroma adapter; the backend refuses for managed stores. */}
+      {data.adapter === "chroma" && (
+        <div className="mt-4 flex items-start justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+          <div>
+            <p className="text-sm font-medium text-slate-800">Reset vector store</p>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Wipes the configured <code className="rounded bg-white px-1">.chroma/</code>{" "}
+              directory and drops the backend's in-process client. Use this to
+              recover from a poisoned store without restarting the server.
+            </p>
+          </div>
+          <ResetVectorStoreButton size="sm" />
+        </div>
+      )}
     </Card>
   );
 }

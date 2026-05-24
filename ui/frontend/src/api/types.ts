@@ -239,6 +239,12 @@ export interface CorpusPassagesResponse {
   window_lines: number;
 }
 
+export interface SystemResetResponse {
+  ok: boolean;
+  path_wiped: string | null;
+  client_dropped: boolean;
+}
+
 export interface IngestStatus {
   state: "idle" | "running" | "succeeded" | "failed";
   task_id: string | null;

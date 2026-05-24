@@ -14,6 +14,7 @@ import type { IterationReport, ReportSummary, StopReason } from "@/api/types";
 import { Card } from "@/components/Card";
 import { Button } from "@/components/Button";
 import { Field, TextInput } from "@/components/Field";
+import { ResetVectorStoreButton } from "@/components/ResetVectorStoreButton";
 import { Spinner } from "@/components/Spinner";
 import { formatPercent, formatUSD, prettyFailureCategory } from "@/lib/format";
 import { cn } from "@/lib/cn";
@@ -804,7 +805,13 @@ function RegressionList({ current }: { current: IterationReport | null }) {
 // Run controls
 // ---------------------------------------------------------------------------
 
-function RunControls({ running }: { running: boolean }) {
+function RunControls({
+  running,
+  adapter,
+}: {
+  running: boolean;
+  adapter: string | null;
+}) {
   const [iterations, setIterations] = useState(1);
   const [budgetUSD, setBudgetUSD] = useState<string>("");
   const [skipRed, setSkipRed] = useState(false);
