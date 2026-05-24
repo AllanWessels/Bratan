@@ -23,9 +23,37 @@ export function formatBytes(bytes: number): string {
   return `${bytes} B`;
 }
 
+import { FAILURE_CATEGORY_LABELS, type FailureCategory } from "@/api/types";
+
+/**
+ * Human-friendly label for a failure category enum value.
+ *
+ * Looks up the SME-facing label from `FAILURE_CATEGORY_LABELS`. Unknown
+ * values (e.g. a future category not yet in the frontend bundle) fall back
+ * to the old title-case behavior so we never render a raw enum to the user.
+ */
 export function prettyFailureCategory(c: string): string {
+  const entry = (FAILURE_CATEGORY_LABELS as Record<string, { label: string }>)[c];
+  if (entry) return entry.label;
   return c
     .split("_")
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(" ");
 }
+
+/**
+ * Description (one-line "what does this mean?") for a failure category.
+ *
+ * Returns an empty string for unknown categories rather than inventing
+ * verbiage, so callers can simply conditionally render.
+ */
+export function failureCategoryDescription(c: string): string {
+  const entry = (
+    FAILURE_CATEGORY_LABELS as Record<string, { description: string }>
+  )[c];
+  return entry?.description ?? "";
+}
+
+/** Re-export so callers can do their own lookups without re-importing. */
+export { FAILURE_CATEGORY_LABELS };
+export type { FailureCategory };

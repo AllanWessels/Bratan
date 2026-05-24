@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   useTestVLLM: vi.fn(),
   useSeedList: vi.fn(),
   useCorpusFiles: vi.fn(),
+  useCorpusPassagesPaginated: vi.fn(),
   useIngestStatus: vi.fn(),
   useStartIngest: vi.fn(),
   useSeedDrafts: vi.fn(),
@@ -31,6 +32,9 @@ const mocks = vi.hoisted(() => ({
   useStopLoop: vi.fn(),
   useGeneratedFiles: vi.fn(),
   useGeneratedCases: vi.fn(),
+  useVLLMStatus: vi.fn(),
+  useStartVLLM: vi.fn(),
+  useStopVLLM: vi.fn(),
 }));
 
 vi.mock("@/api/hooks", () => mocks);
@@ -135,6 +139,12 @@ beforeEach(() => {
     isLoading: false,
   });
   mocks.useCorpusFiles.mockReturnValue({ data: [], isLoading: false, isError: false });
+  mocks.useCorpusPassagesPaginated.mockReturnValue({
+    data: null,
+    isLoading: false,
+    isError: false,
+    error: null,
+  });
   mocks.useIngestStatus.mockReturnValue({
     data: {
       state: "idle",
@@ -209,6 +219,29 @@ beforeEach(() => {
     data: [],
     isLoading: false,
     isError: false,
+  });
+  mocks.useVLLMStatus.mockReturnValue({
+    data: {
+      state: "stopped",
+      model: null,
+      port: null,
+      base_url: null,
+      elapsed_s: 0,
+      message: null,
+    },
+    isLoading: false,
+  });
+  mocks.useStartVLLM.mockReturnValue({
+    mutate: vi.fn(),
+    isPending: false,
+    isError: false,
+    error: null,
+  });
+  mocks.useStopVLLM.mockReturnValue({
+    mutate: vi.fn(),
+    isPending: false,
+    isError: false,
+    error: null,
   });
 });
 

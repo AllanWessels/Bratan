@@ -10,6 +10,7 @@ import type {
   BratanConfig,
   ConnectionTest,
   CorpusFile,
+  CorpusPassagesResponse,
   CorpusSearchRequest,
   CorpusSearchResponse,
   IngestStatus,
@@ -36,6 +37,9 @@ import type {
   TestAnthropicRequest,
   TestVectorDBRequest,
   TestVLLMRequest,
+  VLLMStartRequest,
+  VLLMStatus,
+  VLLMStopResponse,
 } from "./types";
 import type { GeneratedFileSummary } from "./types-generated";
 
@@ -144,6 +148,28 @@ export function useCorpusPassage(
         query: { path: args!.path, start: args!.start, end: args!.end },
       }),
     enabled: !!args,
+  });
+}
+
+/**
+ * Paginated walk of a single corpus file as fixed-line-window passages.
+ *
+ * Backs the SME "browse the corpus" authoring flow — the user picks a
+ * passage first and then writes a question that the passage should answer.
+ * Pass `path = null` to disable the query entirely (no file selected).
+ */
+export function useCorpusPassagesPaginated(
+  path: string | null,
+  offset: number,
+  limit: number,
+) {
+  return useQuery<CorpusPassagesResponse>({
+    queryKey: ["corpus-passages", path, offset, limit],
+    queryFn: () =>
+      request<CorpusPassagesResponse>("/api/corpus/passages", {
+        query: { path: path!, offset, limit },
+      }),
+    enabled: !!path,
   });
 }
 
@@ -300,6 +326,36 @@ export function useStopLoop() {
   return useMutation<LoopStopResponse, Error, void>({
     mutationFn: () => request<LoopStopResponse>("/api/loop/stop", { method: "POST" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["loop-status"] }),
+  });
+}
+
+// ---------- vLLM lifecycle ----------
+
+export function useVLLMStatus(pollMs: number | false = 2000) {
+  return useQuery<VLLMStatus>({
+    queryKey: ["vllm-status"],
+    queryFn: () => request<VLLMStatus>("/api/system/vllm/status"),
+    refetchInterval: pollMs === false ? false : pollMs,
+  });
+}
+
+export function useStartVLLM() {
+  const qc = useQueryClient();
+  return useMutation<VLLMStatus, Error, VLLMStartRequest>({
+    mutationFn: (body) =>
+      request<VLLMStatus>("/api/system/vllm/start", { method: "POST", body }),
+    onSuccess: (s) => {
+      qc.setQueryData(["vllm-status"], s);
+    },
+  });
+}
+
+export function useStopVLLM() {
+  const qc = useQueryClient();
+  return useMutation<VLLMStopResponse, Error, void>({
+    mutationFn: () =>
+      request<VLLMStopResponse>("/api/system/vllm/stop", { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["vllm-status"] }),
   });
 }
 

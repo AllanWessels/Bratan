@@ -218,6 +218,22 @@ class CorpusSearchResponse(BaseModel):
     latency_ms: float
 
 
+class CorpusPassagesResponse(BaseModel):
+    """Paginated walk of a single corpus file as fixed-size line windows.
+
+    Used by the SME "browse the corpus" authoring flow, where the user picks
+    a passage first and then writes a question against it. Distinct from
+    ``CorpusSearchResponse`` because there's no query and no embedding —
+    we just expose the file the way it was written.
+    """
+
+    passages: list[Passage]
+    total: int  # total number of windows in the file (not just this page)
+    offset: int
+    limit: int
+    window_lines: int
+
+
 class IngestStatus(BaseModel):
     state: Literal["idle", "running", "succeeded", "failed"]
     task_id: str | None = None
@@ -364,3 +380,33 @@ class ReportSummary(BaseModel):
     composite_mean: float
     pass_rate_at_0_6: float
     stop_reason: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# vLLM lifecycle (managed local server for the pre-judge)
+# ---------------------------------------------------------------------------
+
+
+class VLLMStartRequest(BaseModel):
+    model: str = "Qwen/Qwen2.5-7B-Instruct-AWQ"
+    port: int = Field(8001, ge=1024, le=65535)
+
+
+class VLLMStatus(BaseModel):
+    """Current state of the managed vLLM subprocess (if any).
+
+    state machine: stopped -> starting -> (downloading) -> ready | failed
+    """
+
+    state: Literal["stopped", "starting", "downloading", "ready", "failed"]
+    model: str | None = None
+    port: int | None = None
+    base_url: str | None = None
+    # Monotonic seconds since the user clicked Start. Resets to 0 when stopped.
+    elapsed_s: float = 0.0
+    message: str | None = None
+
+
+class VLLMStopResponse(BaseModel):
+    ok: bool
+    was_running: bool

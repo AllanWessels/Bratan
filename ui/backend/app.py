@@ -18,11 +18,12 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, stat
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from ui.backend import config_store, loop_control, seed_store, system_probe
+from ui.backend import config_store, loop_control, seed_store, system_probe, vllm_control
 from ui.backend.schemas import (
     BratanConfig,
     ConnectionTest,
     CorpusFile,
+    CorpusPassagesResponse,
     CorpusSearchRequest,
     CorpusSearchResponse,
     GeneratedFileSummary,
@@ -45,6 +46,9 @@ from ui.backend.schemas import (
     TestAnthropicRequest,
     TestVectorDBRequest,
     TestVLLMRequest,
+    VLLMStartRequest,
+    VLLMStatus,
+    VLLMStopResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -155,6 +159,42 @@ def corpus_passage(path: str, start: int, end: int) -> dict:
 
     content = ingest.read_passage(Path(cfg.project.corpus_path), path, start, end)
     return {"path": path, "line_start": start, "line_end": end, "content": content}
+
+
+@app.get("/api/corpus/passages", response_model=CorpusPassagesResponse)
+def corpus_passages(path: str, offset: int = 0, limit: int = 20) -> CorpusPassagesResponse:
+    """List a page of fixed-line-window passages from a single corpus file.
+
+    Backs the SME "browse the corpus" authoring flow. Unlike
+    ``/api/corpus/passage`` (single arbitrary range) and
+    ``/api/corpus/search`` (vector retrieval), this endpoint walks the raw
+    file in ``PASSAGE_WINDOW_LINES``-line windows so subject-matter experts
+    can read the document the way the author wrote it and pick a passage
+    that ought to support a question.
+    """
+    cfg = config_store.load(CONFIG_PATH)
+    from pipeline import ingest
+
+    # Clamp limit to 50 server-side too — the helper does it again but it's
+    # cheap and makes the contract obvious.
+    limit = max(1, min(50, int(limit)))
+    offset = max(0, int(offset))
+
+    try:
+        passages, total = ingest.list_passages_paginated(
+            Path(cfg.project.corpus_path), path, offset=offset, limit=limit
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="file_not_found") from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=400, detail="path_escapes_corpus") from exc
+    return CorpusPassagesResponse(
+        passages=passages,  # type: ignore[arg-type]
+        total=total,
+        offset=offset,
+        limit=limit,
+        window_lines=ingest.PASSAGE_WINDOW_LINES,
+    )
 
 
 @app.post("/api/corpus/ingest", response_model=IngestStatus)
@@ -405,6 +445,44 @@ async def loop_stream(ws: WebSocket) -> None:
                     }
                 )
             )
+
+
+# ---------------------------------------------------------------------------
+# Managed vLLM lifecycle (M2.5 — "I want it on, start it for me")
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/system/vllm/start", response_model=VLLMStatus)
+def system_vllm_start(req: VLLMStartRequest) -> VLLMStatus:
+    try:
+        vllm_control.start(PROJECT_ROOT, model=req.model, port=req.port)
+    except vllm_control.VLLMNotInstalledError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "vllm_not_installed",
+                "message": str(exc),
+                "hint": "uv sync --extra gpu",
+            },
+        ) from exc
+    except RuntimeError as exc:
+        if str(exc) == "vllm_already_running":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"error": "vllm_already_running"},
+            ) from exc
+        raise
+    return VLLMStatus(**vllm_control.status())
+
+
+@app.post("/api/system/vllm/stop", response_model=VLLMStopResponse)
+def system_vllm_stop() -> VLLMStopResponse:
+    return VLLMStopResponse(**vllm_control.stop())
+
+
+@app.get("/api/system/vllm/status", response_model=VLLMStatus)
+def system_vllm_status() -> VLLMStatus:
+    return VLLMStatus(**vllm_control.status())
 
 
 # ---------------------------------------------------------------------------

@@ -111,6 +111,71 @@ def read_passage(corpus_path: Path, rel_path: str, start_line: int, end_line: in
 
 
 # ---------------------------------------------------------------------------
+# Public: paginated passage listing (for SME browse-the-corpus authoring)
+# ---------------------------------------------------------------------------
+
+
+# Window size for the file-walk passage view. ~10 lines is large enough to be
+# semantically meaningful (a paragraph or a small clause) and small enough to
+# scroll through comfortably.
+PASSAGE_WINDOW_LINES = 10
+
+
+def list_passages_paginated(
+    corpus_path: Path, rel_path: str, offset: int, limit: int
+) -> tuple[list[dict], int]:
+    """Return a page of ``PASSAGE_WINDOW_LINES``-line windows from a corpus file.
+
+    This is the SME-facing "browse the file" view: we deliberately skip the
+    chunked vector-store records (which may be tiny or oddly split) and walk
+    the source file in fixed line windows so the user reads it the way the
+    author wrote it.
+
+    Returns ``(passages, total_windows)`` where each passage dict has
+    ``path``, ``line_start``, ``line_end``, ``content``, and ``score=None``.
+    ``limit`` is clamped to ``[1, 50]`` and ``offset`` to ``>= 0`` to match
+    the schema's validators.
+    """
+    limit = max(1, min(50, int(limit)))
+    offset = max(0, int(offset))
+
+    base = corpus_path.resolve()
+    target = (base / rel_path).resolve()
+    if not _is_within(target, base):
+        raise PermissionError(f"Path escapes corpus root: {rel_path}")
+    if not target.exists():
+        raise FileNotFoundError(f"No such file under corpus: {rel_path}")
+
+    text = _load_text(target)
+    lines = text.splitlines()
+    if not lines:
+        return [], 0
+
+    window = PASSAGE_WINDOW_LINES
+    total = (len(lines) + window - 1) // window
+
+    passages: list[dict] = []
+    for i in range(offset, min(offset + limit, total)):
+        start_line = i * window + 1  # 1-indexed inclusive
+        end_line = min((i + 1) * window, len(lines))
+        content = "\n".join(lines[start_line - 1 : end_line])
+        # Skip windows that are completely blank — they read as empty cards
+        # and add nothing for the SME.
+        if not content.strip():
+            continue
+        passages.append(
+            {
+                "path": rel_path,
+                "line_start": start_line,
+                "line_end": end_line,
+                "content": content,
+                "score": None,
+            }
+        )
+    return passages, total
+
+
+# ---------------------------------------------------------------------------
 # Public: background ingest task
 # ---------------------------------------------------------------------------
 
