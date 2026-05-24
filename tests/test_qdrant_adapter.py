@@ -10,8 +10,13 @@ import pytest
 
 pytest.importorskip("qdrant_client")
 
-from pipeline.adapters.base import ChunkRecord  # noqa: E402
-from pipeline.adapters.qdrant import QdrantAdapter, _flatten_metadata, _point_id  # noqa: E402
+from pipeline.adapters.base import ChunkRecord
+from pipeline.adapters.qdrant import (
+    QdrantAdapter,
+    _flatten_metadata,
+    _point_id,
+    _sparse_vectorize,
+)
 
 
 @pytest.fixture
@@ -94,9 +99,88 @@ def test_delete_removes_only_specified(adapter: QdrantAdapter) -> None:
     assert {h.id for h in remaining} == {b}
 
 
-def test_hybrid_query_returns_none(adapter: QdrantAdapter) -> None:
-    """M5 ships dense-only; native sparse retrieval is deferred."""
+def test_hybrid_query_returns_none_before_ingest(adapter: QdrantAdapter) -> None:
+    """Before any upsert the collection doesn't exist, so hybrid has nothing
+    to score against. We surface that as ``None`` (caller can fall back) rather
+    than as an empty list — matches the documented contract on the base class.
+    """
     assert adapter.hybrid_query_if_supported("anything", [1.0, 0.0], 5) is None
+
+
+def test_hybrid_query_returns_hits(adapter: QdrantAdapter) -> None:
+    """End-to-end smoke of native dense + sparse RRF fusion.
+
+    We upsert 5 chunks whose *text* and *embeddings* both line up with the
+    query in different ways, then assert the fused ranking surfaces at
+    least one hit. RRF is rank-based so exact scores aren't pinned, but the
+    presence of a result is enough to prove both lanes wired through.
+    """
+    # Vary text so the sparse lane has something to score on; vary embeddings
+    # so the dense lane has signal too. The "alpha" chunk is the closest match
+    # for the query "alpha keyword" on both lanes.
+    chunks = [
+        _chunk(_hex_id("a"), [1.0, 0.0, 0.0], text="alpha keyword matters here"),
+        _chunk(_hex_id("b"), [0.9, 0.1, 0.0], text="beta beta beta something else"),
+        _chunk(_hex_id("c"), [0.0, 1.0, 0.0], text="gamma totally unrelated content"),
+        _chunk(_hex_id("d"), [0.0, 0.0, 1.0], text="delta yet more unrelated text"),
+        _chunk(_hex_id("e"), [-1.0, 0.0, 0.0], text="epsilon final chunk no match"),
+    ]
+    adapter.upsert(chunks)
+    hits = adapter.hybrid_query_if_supported(
+        text="alpha keyword",
+        embedding=[1.0, 0.0, 0.0],
+        k=3,
+    )
+    assert hits is not None
+    assert len(hits) >= 1
+    # The "alpha" chunk wins on both lanes; RRF should put it first.
+    assert hits[0].id == _hex_id("a")
+
+
+def test_hybrid_falls_back_when_sparse_empty(adapter: QdrantAdapter) -> None:
+    """When the query has zero sparse-vocab overlap (e.g. all stop-words or
+    pure whitespace), the sparse lane returns nothing useful, but the dense
+    prefetch still feeds RRF — so hybrid retrieval keeps working.
+    """
+    adapter.upsert(
+        [
+            _chunk(_hex_id("a"), [1.0, 0.0, 0.0], text="alpha"),
+            _chunk(_hex_id("b"), [0.0, 1.0, 0.0], text="beta"),
+        ]
+    )
+    # Empty string -> empty sparse vector; dense lane carries the result.
+    hits = adapter.hybrid_query_if_supported(
+        text="   ",
+        embedding=[1.0, 0.0, 0.0],
+        k=2,
+    )
+    assert hits is not None
+    assert len(hits) >= 1
+    # Dense match should still bubble the aligned chunk to the top.
+    assert hits[0].id == _hex_id("a")
+
+
+def test_sparse_vectorize_produces_nonempty_for_seed_corpus() -> None:
+    """Sanity check that the BM25-shape vectorizer produces sensible output.
+
+    Specifically: non-empty for non-empty text, empty for empty text, and
+    weights monotone in term frequency (1+log(tf)).
+    """
+    empty = _sparse_vectorize("")
+    assert empty == {}
+
+    out = _sparse_vectorize("hybrid retrieval combines dense and sparse signals")
+    assert isinstance(out, dict)
+    assert len(out) >= 6  # ~7 distinct tokens (case-insensitive)
+    assert all(isinstance(idx, int) and v > 0.0 for idx, v in out.items())
+
+    # Repeated tokens should get higher weight than singletons.
+    singleton = _sparse_vectorize("apple")
+    repeated = _sparse_vectorize("apple apple apple")
+    # Same bucket for "apple" both times -> deterministic, comparable.
+    assert set(singleton.keys()) == set(repeated.keys())
+    [(idx, w1)] = singleton.items()
+    assert repeated[idx] > w1
 
 
 def test_health_check_ok(adapter: QdrantAdapter) -> None:
