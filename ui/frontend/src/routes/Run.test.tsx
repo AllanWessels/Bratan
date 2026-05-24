@@ -44,7 +44,7 @@ const sampleConfig: BratanConfig = {
   },
   models: {
     anthropic_api_key: "",
-    oracle_model: "claude-sonnet-4-20250514",
+    oracle_model: "claude-sonnet-4-6",
     vllm_base_url: "http://localhost:8001",
     prejudge_model: "Qwen/Qwen2.5-14B-Instruct-AWQ",
     embedding_model: "BAAI/bge-large-en-v1.5",

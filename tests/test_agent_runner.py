@@ -74,7 +74,7 @@ def test_run_agent_builds_expected_cmd(monkeypatch: pytest.MonkeyPatch) -> None:
 
     run = agent_runner.run_agent(
         "judge",
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_budget_usd=2.5,
     )
 
@@ -91,7 +91,7 @@ def test_run_agent_builds_expected_cmd(monkeypatch: pytest.MonkeyPatch) -> None:
     assert Path(cmd[add_idx + 1]) == agent_runner.PROJECT_ROOT
     # Model + budget pass-through
     model_idx = cmd.index("--model")
-    assert cmd[model_idx + 1] == "claude-sonnet-4-20250514"
+    assert cmd[model_idx + 1] == "claude-sonnet-4-6"
     budget_idx = cmd.index("--max-budget-usd")
     assert cmd[budget_idx + 1] == "2.5"
     # Sandbox / output shape

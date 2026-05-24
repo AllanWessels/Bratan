@@ -50,7 +50,16 @@ class ChromaAdapter(VectorDBAdapter):
         self._collection_name = collection
         self._client: chromadb.PersistentClient | None = None
         self._collection: Any = None
-        self._connect()
+        # __init__ MUST also recover — the user's "no such table: tenants" hit
+        # on first get_or_create_collection. Wrapping connect itself.
+        try:
+            self._connect()
+        except Exception as exc:
+            msg = str(exc)
+            if not any(marker in msg for marker in _RECOVERABLE_MARKERS):
+                raise
+            logger.warning("Recovering from chromadb init error: %s", exc)
+            self._recover()
 
     def _connect(self) -> None:
         self._path.mkdir(parents=True, exist_ok=True)
@@ -58,6 +67,13 @@ class ChromaAdapter(VectorDBAdapter):
             path=str(self._path),
             settings=Settings(anonymized_telemetry=False, allow_reset=True),
         )
+        # Force the schema-migration codepath BEFORE touching collections so
+        # we surface (and recover from) the "no such table: tenants" race that
+        # otherwise fires inside get_or_create_collection.
+        try:
+            self._client.heartbeat()
+        except Exception as exc:
+            logger.debug("Initial heartbeat failed (will let _connect retry): %s", exc)
         self._collection = self._client.get_or_create_collection(
             name=self._collection_name,
             embedding_function=None,

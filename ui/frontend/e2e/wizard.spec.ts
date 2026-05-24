@@ -63,7 +63,7 @@ test("full wizard persists user choices to bratan.config.yaml", async ({ page })
   const apiKey = page.getByLabel(/api key/i).first();
   await apiKey.fill("sk-ant-e2e-fake");
   const oracleModel = page.getByLabel(/oracle model/i);
-  await oracleModel.fill("claude-sonnet-4-20250514");
+  await oracleModel.fill("claude-sonnet-4-6");
   const save3 = expectSaveStep(page, 3);
   await oracleModel.press("End");
   await save3;
@@ -138,7 +138,7 @@ test("full wizard persists user choices to bratan.config.yaml", async ({ page })
   expect(cfg.vector_db.chroma_collection).toBe("e2e-corpus");
 
   expect(cfg.models.anthropic_api_key).toBe("sk-ant-e2e-fake");
-  expect(cfg.models.oracle_model).toBe("claude-sonnet-4-20250514");
+  expect(cfg.models.oracle_model).toBe("claude-sonnet-4-6");
 
   expect(cfg.cost.usd_per_run).toBe(3.5);
   expect(cfg.cost.subset_eval_size).toBe(12);

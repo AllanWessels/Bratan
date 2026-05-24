@@ -20,7 +20,7 @@ from ui.backend.schemas import BratanConfig, CorpusSearchResponse, Passage
 logger = logging.getLogger(__name__)
 
 _PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "generation.md"
-_FALLBACK_MODEL = "claude-sonnet-4-20250514"
+_FALLBACK_MODEL = "claude-sonnet-4-6"
 
 
 def search_corpus(cfg: BratanConfig, query_text: str, k: int = 10) -> CorpusSearchResponse:

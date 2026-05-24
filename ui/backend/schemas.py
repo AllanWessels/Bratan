@@ -71,7 +71,7 @@ class CostCeilings(BaseModel):
 
 class ModelConfig(BaseModel):
     anthropic_api_key: str = ""
-    oracle_model: str = "claude-sonnet-4-20250514"
+    oracle_model: str = "claude-sonnet-4-6"
     vllm_base_url: str = "http://localhost:8001"
     # Defaults are tuned to fit comfortably on a 16 GB consumer GPU; users with
     # more headroom can pick larger checkpoints in Step 3.
@@ -166,7 +166,7 @@ class TestVectorDBRequest(BaseModel):
 
 class TestAnthropicRequest(BaseModel):
     api_key: str
-    model: str = "claude-sonnet-4-20250514"
+    model: str = "claude-sonnet-4-6"
 
 
 class TestVLLMRequest(BaseModel):
