@@ -3,6 +3,33 @@
 A self-improving RAG pipeline that gets better automatically through a
 red-team / blue-team / judge agent loop, with techniques captured as skills.
 
+> ## ⚡ OPERATING PRINCIPLE — VERIFY CLEAN STATE BEFORE HANDOFF
+>
+> **Before telling the user "ready, go retest", PROVE the state is clean.
+> Never guess. Run the actual commands and read the actual output.**
+>
+> Required pre-handoff checklist — every item must be confirmed by a real
+> command, not assumed:
+>
+> 1. `curl http://127.0.0.1:8000/api/health` → 200 + `{"ok":true}`
+> 2. `curl http://127.0.0.1:8000/api/setup/state` → `config_exists: false,
+>    setup_completed: false, completed_steps: []`
+> 3. `curl -I http://127.0.0.1:5173/` → 200
+> 4. `test -e bratan.config.yaml && echo STILL || echo gone` → `gone`
+> 5. `test -e .bratan-setup.json && echo STILL || echo gone` → `gone`
+> 6. `test -e .chroma && echo STILL || echo gone` → `gone`
+> 7. `test -e test_cases/seed.jsonl && echo STILL || echo gone` → `gone`
+> 8. `ls test_cases/.drafts/ test_cases/generated/` → empty (or only README)
+> 9. `ls reports/run-*.json reports/latest.json 2>&1` → "No such file"
+> 10. **Vite HMR currency check**: `curl -sS http://127.0.0.1:5173/src/<a
+>     recently-changed component>.tsx | head -5` matches the on-disk file.
+>     The user has been bitten by stale Vite modules; if served bytes
+>     differ from disk, restart Vite: `pkill -f "node.*vite"; npm run dev
+>     -- --port 5173 --host 127.0.0.1 &`.
+>
+> If ANY check fails, fix it before handing off. Saying "I think the state
+> is clean" is exactly the failure mode this rule exists to prevent.
+
 > ## ⚡ OPERATING PRINCIPLE — FIX FIRST, THEN TEST
 >
 > **Land every fix before running the test harness. NEVER ship code with
