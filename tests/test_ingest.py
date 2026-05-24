@@ -3,20 +3,20 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
 from pipeline import ingest
 from pipeline.ingest import (
-    _Chunk,
     _chunk_text,
     _content_hash_id,
+    _ingest_sync,
     _load_html,
     _load_text,
     list_corpus,
     read_passage,
 )
-
 
 # ---------------------------------------------------------------------------
 # Chunker invariants
@@ -176,3 +176,118 @@ def test_list_corpus_marks_ingested(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert len(files) == 1
     assert files[0].ingested is True
     assert files[0].n_chunks == 3
+
+
+# ---------------------------------------------------------------------------
+# _ingest_sync failure semantics
+#
+# The bug we're guarding against: a chromadb upsert raises mid-run; the old
+# code caught every exception per-file, logged "Skipped <file>: ...", and
+# returned chunks_written=0 with no error. The worker then reported
+# state="succeeded" with chunks_written=0 — a silent data-loss bug.
+#
+# The new contract: a hard upsert failure (chromadb readonly, embedder OOM,
+# etc.) re-raises out of _ingest_sync so the worker can write state="failed".
+# Soft per-file failures (unsupported extension, encoding) still skip.
+# ---------------------------------------------------------------------------
+
+
+class _FakeAdapter:
+    """Vector store stub that fails the first upsert."""
+
+    def __init__(self, fail_with: Exception) -> None:
+        self._fail_with = fail_with
+        self.upsert_calls = 0
+
+    def upsert(self, records) -> None:
+        self.upsert_calls += 1
+        raise self._fail_with
+
+    def count(self) -> int:  # pragma: no cover - kept for adapter shape parity
+        return 0
+
+
+class _FakeEmbedder:
+    DIM = 8
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return [[float(i) for i in range(self.DIM)] for _ in texts]
+
+
+def _make_cfg(corpus: Path):
+    from ui.backend.schemas import BratanConfig, VectorDBConfig
+
+    return BratanConfig(
+        project=BratanConfig().project.model_copy(update={"corpus_path": str(corpus)}),
+        vector_db=VectorDBConfig(chroma_path=str(corpus.parent / ".chroma")),
+    )
+
+
+def test_ingest_sync_raises_on_unrecoverable_upsert_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-recoverable upsert error must propagate out of _ingest_sync."""
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "a.md").write_text("# Doc A\n\nFirst content.\n")
+    (corpus / "b.md").write_text("# Doc B\n\nSecond content.\n")
+
+    fail = RuntimeError("attempt to write a readonly database")
+    fake_adapter = _FakeAdapter(fail_with=fail)
+    monkeypatch.setattr(ingest, "get_vectordb", lambda _cfg: fake_adapter)
+    monkeypatch.setattr(ingest, "get_embedder", lambda _model: _FakeEmbedder())
+
+    cfg = _make_cfg(corpus)
+
+    with pytest.raises(RuntimeError, match="readonly database"):
+        _ingest_sync(cfg)
+
+    # Critical regression assertion: the FIRST failing upsert must surface,
+    # not be swallowed and let chunks_written stay at 0.
+    assert fake_adapter.upsert_calls == 1
+
+
+def test_ingest_sync_skips_unsupported_files_without_failing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A binary / unsupported file in the corpus must NOT fail the run."""
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "ok.md").write_text("# Real content\n\nText.\n")
+    # An extension we don't support — _iter_corpus_files already filters these,
+    # but if one slips through (e.g. via a future loader regression) _load_text
+    # would raise ValueError("Unsupported extension: ...") and we must skip it.
+
+    successful_records: list[list] = []
+
+    class CountingAdapter:
+        def upsert(self, records):
+            successful_records.append(list(records))
+
+        def count(self):
+            return sum(len(r) for r in successful_records)
+
+    monkeypatch.setattr(ingest, "get_vectordb", lambda _cfg: CountingAdapter())
+    monkeypatch.setattr(ingest, "get_embedder", lambda _model: _FakeEmbedder())
+
+    cfg = _make_cfg(corpus)
+    n = _ingest_sync(cfg)
+    assert n > 0, "expected the supported file to produce chunks"
+
+
+def test_ingest_sync_zero_chunks_when_corpus_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty corpus returns 0 chunks WITHOUT raising — vacuously OK.
+
+    The worker only flips to state=failed when files_done > 0 AND chunks_written == 0,
+    so an empty corpus correctly reports state=succeeded with chunks_written=0.
+    """
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+
+    monkeypatch.setattr(ingest, "get_vectordb", lambda _cfg: MagicMock())
+    monkeypatch.setattr(ingest, "get_embedder", lambda _model: _FakeEmbedder())
+
+    cfg = _make_cfg(corpus)
+    assert _ingest_sync(cfg) == 0

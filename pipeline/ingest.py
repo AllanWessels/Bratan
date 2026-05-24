@@ -12,10 +12,13 @@ Public surface (called from `ui/backend/app.py`):
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import re
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -34,6 +37,23 @@ logger = logging.getLogger(__name__)
 
 SUPPORTED_EXTENSIONS = {".md", ".txt", ".html", ".htm", ".pdf"}
 _PIPELINE_CONFIG_PATH = Path(__file__).resolve().parent / "config.yaml"
+
+# Per-file failures that should NOT be treated as hard ingest failures.
+# Unsupported extensions / encoding errors / busted PDFs are "skip and
+# continue"; anything else (chromadb write errors, embedder OOM) MUST
+# surface as state="failed" so the user isn't lied to by a green status.
+_SOFT_PER_FILE_ERRORS = (
+    UnicodeDecodeError,
+    UnicodeError,
+)
+_SOFT_PER_FILE_ERROR_MARKERS = (
+    "Unsupported extension",
+)
+
+# How long the parent waits for the subprocess to write its first status
+# heartbeat before declaring it orphaned. Generous because chromadb +
+# embedder imports can take a few seconds cold.
+_ORPHAN_STALE_SECONDS = 30.0
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +117,15 @@ def read_passage(corpus_path: Path, rel_path: str, start_line: int, end_line: in
 
 @dataclass
 class _TaskState:
+    """In-process state used WITHIN the ingest subprocess.
+
+    The uvicorn parent process no longer touches this — it reads
+    cross-process state from a JSON status file written by the worker.
+    Kept here because `_ingest_sync` still updates it (it's the natural
+    progress channel for `scripts/ingest_worker._StatusReporter` to
+    snapshot), and because tests import it directly.
+    """
+
     state: str = "idle"
     task_id: str | None = None
     files_total: int = 0
@@ -111,64 +140,249 @@ class _TaskState:
 _TASK = _TaskState()
 
 
-def start_ingest_task(cfg: BratanConfig) -> IngestStatus:
-    """Kick off an ingest run in a background thread.
+# ---- Cross-process status handle (parent process bookkeeping) -------------
 
-    If a task is already running, return its current status unchanged.
+
+@dataclass
+class _SubprocessHandle:
+    """What the parent (uvicorn) remembers about the most recent worker.
+
+    The status JSON file is the source of truth; this dataclass just lets
+    `get_ingest_status` find that file and detect orphans (a worker that
+    exited without writing a terminal state).
     """
-    with _TASK.lock:
-        if _TASK.state == "running":
-            return _snapshot()
-        _TASK.state = "running"
-        _TASK.task_id = uuid.uuid4().hex[:12]
-        _TASK.files_total = 0
-        _TASK.files_done = 0
-        _TASK.chunks_written = 0
-        _TASK.error = None
-        _TASK.current_file = None
-        _TASK.started_at = time.monotonic()
 
-    thread = threading.Thread(target=_run_ingest, args=(cfg,), daemon=True)
-    thread.start()
-    return _snapshot()
+    task_id: str
+    status_path: Path
+    process: subprocess.Popen | None
+    started_at: float  # monotonic seconds
+
+
+_HANDLE: _SubprocessHandle | None = None
+_HANDLE_LOCK = threading.Lock()
+
+
+def _status_dir() -> Path:
+    """Where status JSON files live. Hermetic per-project where possible."""
+    root = os.environ.get("BRATAN_PROJECT_ROOT")
+    if root:
+        return Path(root) / ".bratan" / "ingest"
+    return Path(tempfile.gettempdir()) / "bratan-ingest"
+
+
+def start_ingest_task(cfg: BratanConfig) -> IngestStatus:
+    """Kick off an ingest run in a fresh **subprocess**.
+
+    Why subprocess, not thread: chromadb's Rust bindings hold process-
+    level state per persistent path, and once the uvicorn process has
+    poisoned that state, no in-process recovery can clear it. Isolating
+    ingest to a short-lived child process means each ingest gets a fresh,
+    un-poisoned chromadb client and the parent never has to recover from
+    a write-path failure it doesn't know how to recover from.
+
+    Returns a snapshot of the worker's status (which starts at
+    state="running" the moment the subprocess seeds the status file).
+    """
+    global _HANDLE
+
+    with _HANDLE_LOCK:
+        # If a worker is already running, just surface its current status.
+        if _HANDLE is not None and _is_running(_HANDLE):
+            current = _read_status_file(_HANDLE)
+            if current.state == "running":
+                return current
+            # The previous worker finished; fall through and start a new one.
+
+        task_id = uuid.uuid4().hex[:12]
+        status_dir = _status_dir()
+        status_dir.mkdir(parents=True, exist_ok=True)
+        status_path = status_dir / f"ingest-{task_id}.json"
+
+        # Seed the status file BEFORE the subprocess starts so a caller
+        # who polls immediately gets state="running", not "idle".
+        _write_initial_status(status_path, task_id)
+
+        # We need to hand the worker a config file it can re-load. The
+        # in-memory `cfg` may differ from what's on disk (e.g. the wizard
+        # has staged changes), so we serialize the live config to a tmp
+        # file rather than asking the worker to re-read bratan.config.yaml.
+        config_tmp = status_dir / f"config-{task_id}.yaml"
+        config_tmp.write_text(
+            yaml.safe_dump(cfg.model_dump(mode="json"), sort_keys=False, allow_unicode=True),
+            encoding="utf-8",
+        )
+
+        cmd = [
+            sys.executable,
+            "-m",
+            "scripts.ingest_worker",
+            "--config-path",
+            str(config_tmp),
+            "--status-path",
+            str(status_path),
+            "--task-id",
+            task_id,
+        ]
+        # We must launch from the project root so `scripts.ingest_worker`
+        # is importable. The repo root is two parents above this file.
+        project_root = Path(
+            os.environ.get("BRATAN_PROJECT_ROOT", Path(__file__).resolve().parents[1])
+        )
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(project_root),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                # New session — uvicorn reload / SIGTERM shouldn't take
+                # the worker down with it; the worker decides when it's done.
+                start_new_session=True,
+            )
+        except Exception as exc:
+            # Couldn't spawn — write a terminal status so the caller sees
+            # the failure on their next poll.
+            terminal = {
+                "state": "failed",
+                "task_id": task_id,
+                "files_total": 0,
+                "files_done": 0,
+                "chunks_written": 0,
+                "error": f"failed to spawn ingest worker: {exc}",
+                "current_file": None,
+                "chunks_per_sec": None,
+            }
+            status_path.write_text(json.dumps(terminal), encoding="utf-8")
+            _HANDLE = _SubprocessHandle(
+                task_id=task_id,
+                status_path=status_path,
+                process=None,
+                started_at=time.monotonic(),
+            )
+            return _to_ingest_status(terminal)
+
+        _HANDLE = _SubprocessHandle(
+            task_id=task_id,
+            status_path=status_path,
+            process=proc,
+            started_at=time.monotonic(),
+        )
+        return _read_status_file(_HANDLE)
 
 
 def get_ingest_status() -> IngestStatus:
-    return _snapshot()
+    """Read the most recent worker's status file.
+
+    If no worker has been launched in this process: state="idle". If a
+    worker was launched but exited before writing a terminal state, we
+    surface state="failed" with an explanatory error rather than
+    perpetually returning "running" against a dead process.
+    """
+    with _HANDLE_LOCK:
+        if _HANDLE is None:
+            return IngestStatus(state="idle")
+        return _read_status_file(_HANDLE)
 
 
-def _snapshot() -> IngestStatus:
-    with _TASK.lock:
-        chunks_per_sec: float | None = None
-        if _TASK.started_at is not None and _TASK.chunks_written > 0:
-            elapsed = time.monotonic() - _TASK.started_at
-            if elapsed > 0:
-                chunks_per_sec = round(_TASK.chunks_written / elapsed, 2)
+def _is_running(handle: _SubprocessHandle) -> bool:
+    """True if the worker subprocess hasn't exited yet."""
+    if handle.process is None:
+        return False
+    return handle.process.poll() is None
+
+
+def _read_status_file(handle: _SubprocessHandle) -> IngestStatus:
+    """Read the worker's status JSON and project orphan-detection on top."""
+    raw = _load_status_json(handle.status_path)
+
+    if raw is None:
+        # The worker hasn't written anything yet. Two cases:
+        #  - it's still importing chromadb / embedder (give it a moment),
+        #  - it crashed before seeding the file (treat as failed once it dies).
+        if handle.process is not None and handle.process.poll() is None:
+            return IngestStatus(state="running", task_id=handle.task_id)
         return IngestStatus(
-            state=_TASK.state,  # type: ignore[arg-type]
-            task_id=_TASK.task_id,
-            files_total=_TASK.files_total,
-            files_done=_TASK.files_done,
-            chunks_written=_TASK.chunks_written,
-            error=_TASK.error,
-            current_file=_TASK.current_file,
-            chunks_per_sec=chunks_per_sec,
+            state="failed",
+            task_id=handle.task_id,
+            error="ingest worker exited unexpectedly",
         )
 
+    status = _to_ingest_status(raw)
 
-def _run_ingest(cfg: BratanConfig) -> None:
+    # Orphan detection: status says "running" but the process is gone OR
+    # hasn't updated the file in a long time. Surface the orphan as failed
+    # rather than letting "running" stick forever.
+    if status.state == "running":
+        if handle.process is not None and handle.process.poll() is not None:
+            return IngestStatus(
+                state="failed",
+                task_id=status.task_id or handle.task_id,
+                files_total=status.files_total,
+                files_done=status.files_done,
+                chunks_written=status.chunks_written,
+                error="ingest worker exited unexpectedly",
+                current_file=status.current_file,
+                chunks_per_sec=status.chunks_per_sec,
+            )
+        # Stale heartbeat — process exists but hasn't touched the file recently.
+        updated_iso = raw.get("updated_at_iso")
+        if isinstance(updated_iso, str):
+            try:
+                updated_at = datetime.fromisoformat(updated_iso)
+                age = (datetime.now(UTC) - updated_at).total_seconds()
+                if age > _ORPHAN_STALE_SECONDS and handle.process is None:
+                    return IngestStatus(
+                        state="failed",
+                        task_id=status.task_id or handle.task_id,
+                        error="ingest worker stopped reporting progress",
+                    )
+            except ValueError:
+                pass
+
+    return status
+
+
+def _to_ingest_status(raw: dict) -> IngestStatus:
+    """Coerce a raw status dict (worker-written) into the pydantic IngestStatus."""
+    state = raw.get("state", "idle")
+    if state not in {"idle", "running", "succeeded", "failed"}:
+        state = "failed"
+    return IngestStatus(
+        state=state,  # type: ignore[arg-type]
+        task_id=raw.get("task_id"),
+        files_total=int(raw.get("files_total") or 0),
+        files_done=int(raw.get("files_done") or 0),
+        chunks_written=int(raw.get("chunks_written") or 0),
+        error=raw.get("error"),
+        current_file=raw.get("current_file"),
+        chunks_per_sec=raw.get("chunks_per_sec"),
+    )
+
+
+def _load_status_json(path: Path) -> dict | None:
+    if not path.exists():
+        return None
     try:
-        chunks_written = _ingest_sync(cfg)
-        with _TASK.lock:
-            _TASK.state = "succeeded"
-            _TASK.chunks_written = chunks_written
-            _TASK.current_file = None
-    except Exception as exc:
-        logger.exception("Ingest failed")
-        with _TASK.lock:
-            _TASK.state = "failed"
-            _TASK.error = str(exc)
-            _TASK.current_file = None
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        # Mid-write or transient FS issue — caller will try again on the
+        # next poll. Returning None lets the orphan path do the right thing.
+        return None
+
+
+def _write_initial_status(path: Path, task_id: str) -> None:
+    payload = {
+        "state": "running",
+        "task_id": task_id,
+        "files_total": 0,
+        "files_done": 0,
+        "chunks_written": 0,
+        "error": None,
+        "current_file": None,
+        "chunks_per_sec": None,
+        "started_at_iso": datetime.now(UTC).isoformat(),
+        "updated_at_iso": datetime.now(UTC).isoformat(),
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +391,25 @@ def _run_ingest(cfg: BratanConfig) -> None:
 
 
 def _ingest_sync(cfg: BratanConfig) -> int:
+    """Run a full ingest pass against the configured vector store.
+
+    Failure semantics (load-bearing — the JSON status file is read by the
+    parent process and surfaced to the UI):
+
+    - **Soft, per-file failures** (unsupported extension, encoding error,
+      garbled PDF page) → log a warning, skip the file, keep going. These
+      don't poison the run because they don't touch the vector store.
+    - **Hard failures** (chromadb write rejected, embedder OOM, missing
+      table, "readonly database") → re-raise immediately. The worker
+      catches the exception and writes state="failed" so the user sees a
+      real error instead of "succeeded with 0 chunks".
+
+    Why this matters: the prior behavior caught every exception per-file
+    and logged it as "Skipped <file>: ...". A single chromadb error then
+    caused every subsequent file to skip too, and the run ended with
+    `state=succeeded, chunks_written=0`. The verifier flagged exactly that
+    shape. The fix is to be honest: if the upsert path is broken, FAIL.
+    """
     pipeline_cfg = _load_pipeline_config()
     chunk_size = int(pipeline_cfg.get("chunking", {}).get("size", 400))
     overlap = int(pipeline_cfg.get("chunking", {}).get("overlap", 50))
@@ -199,34 +432,52 @@ def _ingest_sync(cfg: BratanConfig) -> int:
         rel = fp.relative_to(corpus_path).as_posix()
         with _TASK.lock:
             _TASK.current_file = rel
+
+        # ---- Soft loader stage: skip on encoding / unsupported-extension. ----
         try:
             text = _load_text(fp)
-            chunks = _chunk_text(text, chunk_size, overlap, separators)
-            records: list[ChunkRecord] = []
-            embeddings = embedder.embed([c.text for c in chunks]) if chunks else []
-            for chunk, vector in zip(chunks, embeddings, strict=False):
-                chunk_id = _content_hash_id(rel, chunk.start_line, chunk.end_line, chunk.text)
-                records.append(
-                    ChunkRecord(
-                        id=chunk_id,
-                        text=chunk.text,
-                        embedding=vector,
-                        metadata={
-                            "path": rel,
-                            "start_line": chunk.start_line,
-                            "end_line": chunk.end_line,
-                        },
-                    )
-                )
-            if records:
-                adapter.upsert(records)
-                chunks_written += len(records)
-        except Exception as exc:
-            logger.warning("Skipped %s: %s", rel, exc)
-        finally:
+        except _SOFT_PER_FILE_ERRORS as exc:
+            logger.warning("Skipped %s (loader): %s", rel, exc)
             with _TASK.lock:
                 _TASK.files_done += 1
-                _TASK.chunks_written = chunks_written
+            continue
+        except ValueError as exc:
+            # `_load_text` raises ValueError("Unsupported extension: ...")
+            # which is a soft skip; any other ValueError is a hard failure.
+            if any(marker in str(exc) for marker in _SOFT_PER_FILE_ERROR_MARKERS):
+                logger.warning("Skipped %s (loader): %s", rel, exc)
+                with _TASK.lock:
+                    _TASK.files_done += 1
+                continue
+            raise
+
+        # ---- Hard stages: chunk, embed, upsert. Any failure here is fatal. ----
+        chunks = _chunk_text(text, chunk_size, overlap, separators)
+        records: list[ChunkRecord] = []
+        embeddings = embedder.embed([c.text for c in chunks]) if chunks else []
+        for chunk, vector in zip(chunks, embeddings, strict=False):
+            chunk_id = _content_hash_id(rel, chunk.start_line, chunk.end_line, chunk.text)
+            records.append(
+                ChunkRecord(
+                    id=chunk_id,
+                    text=chunk.text,
+                    embedding=vector,
+                    metadata={
+                        "path": rel,
+                        "start_line": chunk.start_line,
+                        "end_line": chunk.end_line,
+                    },
+                )
+            )
+        if records:
+            # If this raises, it raises. The worker writes state="failed"
+            # and we never claim "succeeded with 0 chunks" again.
+            adapter.upsert(records)
+            chunks_written += len(records)
+
+        with _TASK.lock:
+            _TASK.files_done += 1
+            _TASK.chunks_written = chunks_written
 
     return chunks_written
 
