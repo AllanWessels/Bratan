@@ -113,46 +113,62 @@ export function CaseWizardFromCorpus() {
   // Autosave the draft so the SME never loses work between page reloads.
   // We persist the draft even though the wizard's shape differs from the
   // question-first one — the backend `SeedDraft` schema is permissive enough.
+  //
+  // The interval is created ONCE on mount (and torn down on unmount). The
+  // previous version listed `[draft, saveDraft]` as deps, which re-created the
+  // setInterval on every keystroke and on every render of the mutation hook.
+  // Beyond the wasted work, the cleanup-and-reschedule pattern meant the 2s
+  // window kept resetting while the user typed — autosave only fired after a
+  // 2s typing pause. With refs we now tick every 2s regardless.
   const lastSerializedRef = useRef<string>("");
+  const draftRef = useRef(draft);
+  const saveDraftRef = useRef(saveDraft);
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
+  useEffect(() => {
+    saveDraftRef.current = saveDraft;
+  }, [saveDraft]);
   useEffect(() => {
     const interval = setInterval(() => {
-      const passagesRefs = draft.selectedPassage
+      const d = draftRef.current;
+      const passagesRefs = d.selectedPassage
         ? [
             {
-              path: draft.selectedPassage.path,
-              line_start: draft.selectedPassage.line_start,
-              line_end: draft.selectedPassage.line_end,
+              path: d.selectedPassage.path,
+              line_start: d.selectedPassage.line_start,
+              line_end: d.selectedPassage.line_end,
             },
           ]
         : [];
       const serialized = JSON.stringify({
-        question: draft.question,
-        ground_truth: draft.ground_truth,
+        question: d.question,
+        ground_truth: d.ground_truth,
         passages: passagesRefs,
-        failure_category: draft.failure_category || null,
-        notes: draft.notes,
+        failure_category: d.failure_category || null,
+        notes: d.notes,
       });
       const hasContent =
-        draft.question.trim() ||
-        draft.ground_truth.trim() ||
+        d.question.trim() ||
+        d.ground_truth.trim() ||
         passagesRefs.length > 0;
       if (hasContent && serialized !== lastSerializedRef.current) {
         lastSerializedRef.current = serialized;
-        saveDraft.mutate({
-          id: draft.id,
+        saveDraftRef.current.mutate({
+          id: d.id,
           draft: {
-            question: draft.question,
-            ground_truth: draft.ground_truth,
+            question: d.question,
+            ground_truth: d.ground_truth,
             passages: passagesRefs,
             failure_category:
-              draft.failure_category === "" ? null : draft.failure_category,
-            notes: draft.notes,
+              d.failure_category === "" ? null : d.failure_category,
+            notes: d.notes,
           },
         });
       }
     }, AUTOSAVE_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [draft, saveDraft]);
+  }, []);
 
   // Debounced validation. Different from the question-first wizard: a passage
   // is selected by clicking, not by typing, so we only need the question and
