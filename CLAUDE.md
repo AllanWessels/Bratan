@@ -176,16 +176,7 @@ pyproject.toml                  uv-managed Python project
    why, not what. The agents read each other's commit messages as signal.
 5. **Never modify `/corpus/` or `/test_cases/seed.jsonl`.** These are the
    anchor. If those move, regression detection becomes meaningless.
-6. **Fan out everywhere it's possible.** Any task that can be split into
-   independent sub-tasks SHOULD be — dispatch sub-agents via the Agent tool
-   with `run_in_background: true`, then continue with other work and wait
-   for completion notifications. This applies to test runs (pytest +
-   vitest + Playwright + live integration in parallel), to multi-component
-   refactors (frontend + backend + tests in parallel agents with a shared
-   contract), and to verification cycles (one agent per check). The main
-   conversation context is finite and fills with log spam fast; the project
-   has been bitten by "I'll just do this in-line" multiple times. Default to
-   parallel; serial is the exception that needs justification.
+6. **Fan out.** See the FAN OUT OPERATING PRINCIPLE at the top of this file.
 
 ## Run the loop
 
@@ -205,10 +196,15 @@ threshold across 5 consecutive iterations.
 - LLM for agents: Claude Sonnet 4 (model id `claude-sonnet-4-6`)
 - LLM for judge: Claude Sonnet 4 (DO NOT downgrade — judge reliability
   is the load-bearing assumption of the whole loop)
-- Embedding model: Voyage `voyage-3` (configurable in `/pipeline/config.yaml`)
-- Vector store: ChromaDB (local, no external service)
-- Reranker: `cohere/rerank-3.5` by default (configurable)
+- Embedding model: `BAAI/bge-small-en-v1.5` (local, GPU if available;
+  configurable in the setup wizard)
+- Reranker: `BAAI/bge-reranker-v2-m3` (local; configurable)
+- Pre-judge: `Qwen/Qwen2.5-7B-Instruct-AWQ` via local vLLM (configurable)
+- Vector store: ChromaDB (local, no external service); Qdrant/Pinecone/
+  Weaviate/pgvector adapters also ship
 - Test set: starts at ~50 cases in `seed.jsonl`; grows from there
+- Source of truth for these defaults is `ui/backend/schemas.py::ModelConfig`,
+  not this list — if they ever diverge, the schema wins.
 
 ## The non-negotiable invariants
 
