@@ -147,6 +147,35 @@ def test_with_recovery_recognizes_hnsw_segment_missing(adapter: ChromaAdapter) -
     assert any(marker in err for marker in _RECOVERABLE_MARKERS)
 
 
+def test_health_check_goes_through_recovery_wrapper(
+    adapter: ChromaAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: the Step 2 "Test connection" button surfaced raw chromadb
+    errors because health_check called self._collection.count() directly,
+    bypassing _with_recovery. It must use self.count() so recoverable errors
+    are handled and the user sees ok=true on a fresh collection."""
+
+    state = {"raw_calls": 0}
+
+    real_count = adapter._collection.count
+
+    def boom_once_then_ok():
+        state["raw_calls"] += 1
+        if state["raw_calls"] == 1:
+            raise Exception(
+                "Database error: error returned from database: (code: 1) no such table: tenants"
+            )
+        return real_count()
+
+    monkeypatch.setattr(adapter._collection, "count", boom_once_then_ok)
+    # Pretend recovery succeeds (don't actually nuke chromadb's Rust state).
+    monkeypatch.setattr(adapter, "_recover", lambda: None)
+
+    result = adapter.health_check()
+    assert result.ok is True
+    assert state["raw_calls"] >= 2  # retried after recovery
+
+
 def test_vector_query_returns_empty_after_segment_loss(
     adapter: ChromaAdapter, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -164,7 +164,10 @@ class ChromaAdapter(VectorDBAdapter):
     def health_check(self) -> ConnectionTest:
         t0 = time.perf_counter()
         try:
-            n = self._collection.count()
+            # Use self.count() so we go through _with_recovery — bypassing it
+            # is what made the "Test connection" button surface the raw
+            # "no such table: tenants" error to the user.
+            n = self.count()
             latency_ms = (time.perf_counter() - t0) * 1000.0
             return ConnectionTest(
                 ok=True,
