@@ -3,12 +3,24 @@ import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { ResetVectorStoreButton } from "./ResetVectorStoreButton";
+import { useCorpusFiles } from "@/api/hooks";
 import { useUIStore } from "@/store/uiStore";
 import {
   renderWithQueryClient,
   type RequestStub,
 } from "@/test-utils/withQueryClient";
 import type { CorpusFile, IngestStatus } from "@/api/types";
+
+/**
+ * Thin observer that keeps `['corpus-files']` alive in the React Query cache
+ * for the duration of the test. Without an active subscriber, invalidation
+ * marks the key stale but never triggers a background refetch, so the
+ * post-reset payload would never land in the cache.
+ */
+function CorpusFilesObserver() {
+  useCorpusFiles();
+  return null;
+}
 
 /**
  * Cross-query coupling test for `ResetVectorStoreButton` — closes audit
@@ -98,24 +110,27 @@ describe("ResetVectorStoreButton — cross-query invalidation", () => {
       throw new Error(`unexpected request: ${method} ${url}`);
     };
 
+    // `CorpusFilesObserver` mounts `useCorpusFiles()`, creating an active
+    // subscriber on `['corpus-files']`. React Query only triggers a background
+    // refetch on `invalidateQueries` when at least one observer is mounted;
+    // without this, invalidation marks the key stale but never fires a new
+    // fetch, so the post-reset payload would never land in the cache.
     const { queryClient } = renderWithQueryClient(
-      <ResetVectorStoreButton />,
+      <>
+        <CorpusFilesObserver />
+        <ResetVectorStoreButton />
+      </>,
       { requestStub },
     );
 
-    // Pre-warm the `['corpus-files']` cache so the post-reset invalidate
-    // has something visible to invalidate. Without this prefetch, the
-    // query would simply not be in the cache at all and we couldn't
-    // distinguish "invalidated" from "never queried".
-    await queryClient.prefetchQuery({
-      queryKey: ["corpus-files"],
-      queryFn: () =>
-        Promise.resolve(filesPayload as unknown).then((v) => v as CorpusFile[]),
+    // Wait for the initial `['corpus-files']` fetch (driven by the observer
+    // above) to settle before we fire the reset.
+    await waitFor(() => {
+      expect(
+        queryClient.getQueryState<CorpusFile[]>(["corpus-files"])?.data?.[0]
+          .ingested,
+      ).toBe(true);
     });
-    expect(
-      queryClient.getQueryState<CorpusFile[]>(["corpus-files"])?.data?.[0]
-        .ingested,
-    ).toBe(true);
 
     // Drive the modal + confirm flow.
     const user = userEvent.setup();
