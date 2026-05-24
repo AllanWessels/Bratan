@@ -59,6 +59,44 @@ def _truthy(value: str | None) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+# Repo root computed from this file's location: chroma.py lives at
+# pipeline/adapters/chroma.py so parents[2] is the project root. Tests that
+# instantiate ChromaAdapter against this path (e.g. via BratanConfig()'s
+# default `./.chroma`) would poison the real on-disk store the live UI
+# reads from. The pytest-time guard below refuses that combination.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_PROJECT_DEFAULT_CHROMA_PATH = (_REPO_ROOT / ".chroma").resolve()
+
+
+def _refuse_project_default_under_pytest(path: Path) -> None:
+    """Belt-and-braces: refuse to open ./.chroma under pytest.
+
+    The StubEmbedder used in tests produces 32-dim vectors; if any of those
+    landed in the real on-disk store, the next live BGE-small call (384-dim)
+    would 500 with "Collection expecting embedding with dimension of 32".
+    Tests should always pass an explicit tmp_path-based ``chroma_path``;
+    if they don't, fail loud here rather than silently corrupting state
+    across sessions.
+    """
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        return
+    try:
+        resolved = path.expanduser().resolve()
+    except OSError:
+        # Path doesn't exist yet — that's fine for the comparison; resolve
+        # against the parent so a planned `.chroma` location still matches.
+        resolved = (Path.cwd() / path).resolve()
+    if resolved == _PROJECT_DEFAULT_CHROMA_PATH:
+        test_name = os.environ.get("PYTEST_CURRENT_TEST", "<unknown>")
+        raise RuntimeError(
+            f"ChromaAdapter must use a tmp path during pytest. "
+            f"Got the project-default path {resolved}, which would poison "
+            f"the real on-disk store. Test: {test_name}. "
+            f"Pass an explicit chroma_path=tmp_path/'chroma' (or set "
+            f"cfg.vector_db.chroma_path to a tmp location)."
+        )
+
+
 # Process-wide registry of live ChromaAdapter instances. Used by
 # `drop_in_process_clients()` so the reset endpoint can null out every
 # retained adapter handle, not just the most recently-constructed one.
@@ -138,6 +176,7 @@ class ChromaAdapter(VectorDBAdapter):
         **_: Any,
     ) -> None:
         self._path = Path(path)
+        _refuse_project_default_under_pytest(self._path)
         self._path.mkdir(parents=True, exist_ok=True)
         self._collection_name = collection
         self._client: chromadb.PersistentClient | None = None
