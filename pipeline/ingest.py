@@ -293,12 +293,19 @@ def start_ingest_task(cfg: BratanConfig) -> IngestStatus:
         project_root = Path(
             os.environ.get("BRATAN_PROJECT_ROOT", Path(__file__).resolve().parents[1])
         )
+        # Scrub BRATAN_CHROMA_SUBPROCESS_QUERY from the child env. The uvicorn
+        # parent sets it for read-path isolation; the ingest worker is the
+        # *write* path and needs the direct in-process chromadb client. If
+        # we let the flag leak through, ChromaAdapter would refuse upserts
+        # with the defensive guard added alongside the query worker.
+        child_env = {k: v for k, v in os.environ.items() if k != "BRATAN_CHROMA_SUBPROCESS_QUERY"}
         try:
             proc = subprocess.Popen(
                 cmd,
                 cwd=str(project_root),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                env=child_env,
                 # New session — uvicorn reload / SIGTERM shouldn't take
                 # the worker down with it; the worker decides when it's done.
                 start_new_session=True,

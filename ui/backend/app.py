@@ -11,10 +11,11 @@ import contextlib
 import json
 import logging
 import os
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, status
+from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -43,6 +44,7 @@ from ui.backend.schemas import (
     SeedValidateRequest,
     SeedValidateResponse,
     SetupState,
+    SystemResetResponse,
     TestAnthropicRequest,
     TestVectorDBRequest,
     TestVLLMRequest,
@@ -50,6 +52,7 @@ from ui.backend.schemas import (
     VLLMStatus,
     VLLMStopResponse,
 )
+from ui.backend.schemas import VectorDBAdapter as schemas_VectorDBAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -486,6 +489,126 @@ def system_vllm_status() -> VLLMStatus:
 
 
 # ---------------------------------------------------------------------------
+# Vector-store reset — wipes `.chroma/` AND drops in-process chroma client
+# refs so verifier agents and end users can recover from a poisoned state
+# without manual `rm -rf` and without bouncing uvicorn.
+#
+# The endpoint deliberately does NOT touch /corpus/, /test_cases/seed.jsonl,
+# or /reports/ — those are anchors that the loop's regression guarantees
+# depend on. The reset is scoped to the vector store ONLY.
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/system/reset-vector-store", response_model=SystemResetResponse)
+def system_reset_vector_store(
+    confirm: bool = False,
+    body: dict | None = Body(default=None),
+) -> SystemResetResponse:
+    """Wipe the configured `.chroma/` directory + drop in-process chroma refs.
+
+    Guarded: the caller must pass either `?confirm=true` as a query param OR a
+    JSON body of ``{"confirm": true}`` so accidental curl hits do nothing.
+
+    Only supported for the chroma adapter; for managed stores
+    (Qdrant/Pinecone/Weaviate/pgvector) the user must reset via the provider's
+    console — we refuse with 400 rather than silently no-op.
+    """
+    confirmed = bool(confirm) or bool(isinstance(body, dict) and body.get("confirm") is True)
+    if not confirmed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "confirmation_required",
+                "message": (
+                    "Vector-store reset is destructive. Pass ?confirm=true "
+                    'or a JSON body {"confirm": true} to proceed.'
+                ),
+            },
+        )
+
+    cfg = config_store.load(CONFIG_PATH)
+    adapter = cfg.vector_db.adapter
+    if adapter != schemas_VectorDBAdapter.CHROMA:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "adapter_not_supported",
+                "message": (
+                    f"Reset is only supported for the chroma adapter; "
+                    f"current adapter is {adapter.value!r}. For Qdrant, "
+                    f"Pinecone, Weaviate, or pgvector, use your provider's "
+                    f"console (or DROP TABLE for pgvector) to clear the store."
+                ),
+            },
+        )
+
+    # Resolve chroma_path: relative paths are anchored at PROJECT_ROOT so
+    # different working directories don't accidentally point at the wrong
+    # `.chroma` dir on disk.
+    chroma_path_raw = cfg.vector_db.chroma_path or "./.chroma"
+    chroma_path = Path(chroma_path_raw)
+    if not chroma_path.is_absolute():
+        chroma_path = (PROJECT_ROOT / chroma_path).resolve()
+
+    # Safety belt: never let the path escape PROJECT_ROOT. If the user
+    # configured `chroma_path: /` we refuse rather than `rm -rf /`.
+    try:
+        chroma_path.relative_to(PROJECT_ROOT.resolve())
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "path_outside_project",
+                "message": (
+                    f"Refusing to reset {chroma_path!s}: it escapes the "
+                    f"project root {PROJECT_ROOT!s}."
+                ),
+            },
+        ) from exc
+
+    # Belt-and-braces: never let the resolved path land on a sibling we
+    # protect (corpus / test_cases / reports). The relative_to check above
+    # already prevents this for properly-configured paths, but a `chroma_path:
+    # ./corpus` would slip through it.
+    protected = {
+        (PROJECT_ROOT / "corpus").resolve(),
+        (PROJECT_ROOT / "test_cases").resolve(),
+        (PROJECT_ROOT / "reports").resolve(),
+    }
+    if chroma_path.resolve() in protected:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "path_is_protected",
+                "message": (
+                    f"Refusing to reset {chroma_path!s}: it overlaps a "
+                    f"protected directory (corpus / test_cases / reports)."
+                ),
+            },
+        )
+
+    # Drop in-process refs FIRST so no live client is holding the sqlite
+    # handle when we rmtree the directory under it.
+    from pipeline.adapters import chroma as chroma_adapter_mod
+
+    client_dropped = chroma_adapter_mod.drop_in_process_clients()
+
+    path_wiped: str | None = None
+    if chroma_path.exists():
+        shutil.rmtree(chroma_path, ignore_errors=True)
+        path_wiped = str(chroma_path)
+        logger.info("Wiped vector store at %s", chroma_path)
+    else:
+        logger.info("Vector store path %s did not exist; nothing to wipe", chroma_path)
+
+    return SystemResetResponse(
+        ok=True,
+        path_wiped=path_wiped,
+        client_dropped=client_dropped,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Startup
 # ---------------------------------------------------------------------------
 
@@ -494,3 +617,12 @@ def system_vllm_status() -> VLLMStatus:
 def on_startup() -> None:
     logger.info("Bratan API starting at %s", PROJECT_ROOT)
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    # Route every chromadb READ this process makes through a fresh subprocess
+    # (`scripts.query_worker`). The long-running uvicorn host previously kept
+    # chromadb's per-path Rust singleton in memory; once `.chroma/` was wiped
+    # or partially migrated under it, every subsequent `/api/corpus/search`
+    # and `/api/seed/validate` surfaced "no such table: tenants/databases" /
+    # "Nothing found on disk" / dimension-mismatch errors. The subprocess
+    # routing isolates that state to a short-lived child that can't outlive
+    # a single request. Writes already go through `scripts.ingest_worker`.
+    os.environ.setdefault("BRATAN_CHROMA_SUBPROCESS_QUERY", "1")
