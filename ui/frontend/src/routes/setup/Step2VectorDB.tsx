@@ -39,7 +39,7 @@ const ADAPTERS: AdapterOption[] = [
     blurb: "Local, file-backed. No external service required.",
     enabled: true,
   },
-  { id: "qdrant", label: "Qdrant", blurb: "Self-hosted or cloud.", enabled: false },
+  { id: "qdrant", label: "Qdrant", blurb: "Self-hosted or cloud.", enabled: true },
   { id: "pinecone", label: "Pinecone", blurb: "Managed service.", enabled: false },
   { id: "weaviate", label: "Weaviate", blurb: "Self-hosted or cloud.", enabled: false },
   { id: "pgvector", label: "pgvector", blurb: "Postgres extension.", enabled: false },
@@ -126,6 +126,40 @@ export function Step2VectorDB({ config }: Props) {
                 id={id}
                 value={data.chroma_path}
                 onChange={(e) => setData({ ...data, chroma_path: e.target.value })}
+              />
+            )}
+          </Field>
+          <Field label="Collection name">
+            {(id) => (
+              <TextInput
+                id={id}
+                value={data.chroma_collection}
+                onChange={(e) => setData({ ...data, chroma_collection: e.target.value })}
+              />
+            )}
+          </Field>
+        </div>
+      )}
+
+      {data.adapter === "qdrant" && (
+        <div className="mt-6 grid grid-cols-1 gap-5 md:grid-cols-2">
+          <Field label="Qdrant URL" hint="e.g. http://localhost:6333 or a Qdrant Cloud URL.">
+            {(id) => (
+              <TextInput
+                id={id}
+                value={data.qdrant_url ?? ""}
+                onChange={(e) => setData({ ...data, qdrant_url: e.target.value || null })}
+                placeholder="http://localhost:6333"
+              />
+            )}
+          </Field>
+          <Field label="API key" hint="Required for Qdrant Cloud; leave empty for local.">
+            {(id) => (
+              <TextInput
+                id={id}
+                type="password"
+                value={data.qdrant_api_key ?? ""}
+                onChange={(e) => setData({ ...data, qdrant_api_key: e.target.value || null })}
               />
             )}
           </Field>

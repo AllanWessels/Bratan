@@ -25,7 +25,16 @@ def get_vectordb(cfg: BratanConfig) -> VectorDBAdapter:
     if adapter == AdapterEnum.QDRANT:
         from pipeline.adapters.qdrant import QdrantAdapter
 
-        return QdrantAdapter()
+        if not cfg.vector_db.qdrant_url:
+            raise ValueError(
+                "vector_db.adapter is 'qdrant' but vector_db.qdrant_url is empty; "
+                "set it to a reachable Qdrant URL (e.g. http://localhost:6333)."
+            )
+        return QdrantAdapter(
+            url=cfg.vector_db.qdrant_url,
+            api_key=cfg.vector_db.qdrant_api_key,
+            collection=cfg.vector_db.chroma_collection,
+        )
     if adapter == AdapterEnum.PINECONE:
         from pipeline.adapters.pinecone import PineconeAdapter
 
