@@ -1,14 +1,18 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { Step8JudgeWeights } from "./Step8JudgeWeights";
-import { drag, sliderPct } from "@/test/actuation-helpers";
 
 /**
- * Drives all three weight sliders. Each test sets a value and confirms
- * both (a) the autosave payload receives the new weight and (b) the
- * sum-to-1 validation banner flips when the weights no longer sum to 1.
+ * Drives all three weight number inputs. Each test sets a value and
+ * confirms both (a) the autosave payload receives the new weight and
+ * (b) the sum-to-1 validation banner flips when the weights no longer
+ * sum to 1.
+ *
+ * (Was previously slider-driven; the <Slider> was replaced with
+ * <NumberInput> because the native range input's fill direction
+ * misbehaved relative to the actual value.)
  */
 
 const originalFetch = globalThis.fetch;
@@ -55,9 +59,11 @@ afterEach(() => {
 });
 
 describe("Step8JudgeWeights actuation — three weights + sum validation", () => {
-  it("dragging correctness updates the autosave payload", async () => {
+  it("editing correctness updates the autosave payload", async () => {
     render(withProviders(<Step8JudgeWeights config={null} />));
-    drag(screen.getByLabelText(/^correctness$/i), 0.7);
+    fireEvent.change(screen.getByLabelText(/^correctness$/i), {
+      target: { value: "0.7" },
+    });
     await flushAutoSave();
     const data = (
       captured
@@ -67,9 +73,11 @@ describe("Step8JudgeWeights actuation — three weights + sum validation", () =>
     expect(data.judge_weights.correctness).toBeCloseTo(0.7, 5);
   });
 
-  it("dragging recall_at_5 updates the autosave payload", async () => {
+  it("editing recall_at_5 updates the autosave payload", async () => {
     render(withProviders(<Step8JudgeWeights config={null} />));
-    drag(screen.getByLabelText(/recall @ 5/i), 0.5);
+    fireEvent.change(screen.getByLabelText(/recall @ 5/i), {
+      target: { value: "0.5" },
+    });
     await flushAutoSave();
     const data = (
       captured
@@ -79,9 +87,11 @@ describe("Step8JudgeWeights actuation — three weights + sum validation", () =>
     expect(data.judge_weights.recall_at_5).toBeCloseTo(0.5, 5);
   });
 
-  it("dragging faithfulness updates the autosave payload", async () => {
+  it("editing faithfulness updates the autosave payload", async () => {
     render(withProviders(<Step8JudgeWeights config={null} />));
-    drag(screen.getByLabelText(/^faithfulness$/i), 0.6);
+    fireEvent.change(screen.getByLabelText(/^faithfulness$/i), {
+      target: { value: "0.6" },
+    });
     await flushAutoSave();
     const data = (
       captured
@@ -91,33 +101,60 @@ describe("Step8JudgeWeights actuation — three weights + sum validation", () =>
     expect(data.judge_weights.faithfulness).toBeCloseTo(0.6, 5);
   });
 
-  it("changing any single weight away from the default invalidates the sum-to-1 banner", async () => {
+  it("changing any single weight away from the default invalidates the sum-to-1 banner", () => {
     render(withProviders(<Step8JudgeWeights config={null} />));
-    expect(screen.getByText(/\(valid\)/i)).toBeInTheDocument();
-    drag(screen.getByLabelText(/^correctness$/i), 0.9);
-    expect(screen.getByText(/should sum to 1\.00/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/\(valid\)/i).length).toBeGreaterThan(0);
+    fireEvent.change(screen.getByLabelText(/^correctness$/i), {
+      target: { value: "0.9" },
+    });
+    expect(
+      screen.getAllByText(/should sum to 1\.00/i).length,
+    ).toBeGreaterThan(0);
   });
 
-  it("setting weights back to a 1.00 sum re-validates the banner", async () => {
+  it("setting weights back to a 1.00 sum re-validates the banner", () => {
     render(withProviders(<Step8JudgeWeights config={null} />));
-    drag(screen.getByLabelText(/^correctness$/i), 0.5);
-    drag(screen.getByLabelText(/recall @ 5/i), 0.25);
-    drag(screen.getByLabelText(/^faithfulness$/i), 0.25);
-    expect(screen.getByText(/\(valid\)/i)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/^correctness$/i), {
+      target: { value: "0.5" },
+    });
+    fireEvent.change(screen.getByLabelText(/recall @ 5/i), {
+      target: { value: "0.25" },
+    });
+    fireEvent.change(screen.getByLabelText(/^faithfulness$/i), {
+      target: { value: "0.25" },
+    });
+    expect(screen.getAllByText(/\(valid\)/i).length).toBeGreaterThan(0);
   });
 
-  it("each slider has a deterministic data-testid based on its label", () => {
+  it("each input has a deterministic data-testid based on its label", () => {
     render(withProviders(<Step8JudgeWeights config={null} />));
-    expect(screen.getByTestId("slider-correctness")).toBeInTheDocument();
-    expect(screen.getByTestId("slider-recall-5")).toBeInTheDocument();
-    expect(screen.getByTestId("slider-faithfulness")).toBeInTheDocument();
+    expect(screen.getByTestId("number-input-correctness")).toBeInTheDocument();
+    expect(screen.getByTestId("number-input-recall-5")).toBeInTheDocument();
+    expect(screen.getByTestId("number-input-faithfulness")).toBeInTheDocument();
   });
 
-  it("each slider reflects its value as a percentage on data-percentage", () => {
+  it("each input displays the 'weight' unit suffix", () => {
     render(withProviders(<Step8JudgeWeights config={null} />));
-    // Defaults: 0.4, 0.3, 0.3 over the 0..1 range.
-    expect(sliderPct(screen.getByTestId("slider-correctness"))).toBeCloseTo(40, 1);
-    expect(sliderPct(screen.getByTestId("slider-recall-5"))).toBeCloseTo(30, 1);
-    expect(sliderPct(screen.getByTestId("slider-faithfulness"))).toBeCloseTo(30, 1);
+    expect(
+      screen.getByTestId("number-input-correctness-unit"),
+    ).toHaveTextContent("weight");
+    expect(
+      screen.getByTestId("number-input-recall-5-unit"),
+    ).toHaveTextContent("weight");
+    expect(
+      screen.getByTestId("number-input-faithfulness-unit"),
+    ).toHaveTextContent("weight");
+  });
+
+  it("an out-of-range value (e.g. 1.5) lights up the red border + Min/Max hint without blocking the keystroke", () => {
+    render(withProviders(<Step8JudgeWeights config={null} />));
+    fireEvent.change(screen.getByLabelText(/^correctness$/i), {
+      target: { value: "1.5" },
+    });
+    expect(screen.getAllByText(/Min 0, Max 1/i).length).toBeGreaterThan(0);
+    expect(screen.getByLabelText(/^correctness$/i)).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
   });
 });

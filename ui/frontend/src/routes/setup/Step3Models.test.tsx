@@ -305,6 +305,16 @@ describe("Step3Models", () => {
     expect(cmd.textContent).toMatch(/vllm serve Qwen\/Qwen2\.5-7B-Instruct-AWQ --port 8001/);
   });
 
+  it("vLLM 'Get vLLM running' card appears ABOVE 'Local vLLM endpoint (optional)' card", () => {
+    // config={null} defaults use_local_prejudge=true, so both cards render.
+    render(withProviders(<Step3Models config={null} />));
+    const cards = screen.getAllByText(/Get vLLM running|Local vLLM endpoint/i);
+    expect(cards.length).toBe(2);
+    // First match (top of DOM) should be "Get vLLM running"
+    expect(cards[0].textContent).toMatch(/Get vLLM running/i);
+    expect(cards[1].textContent).toMatch(/Local vLLM endpoint/i);
+  });
+
   it("renders the 'not installed' hint when the start endpoint returns vllm_not_installed", async () => {
     // Override fetch for this one test to send a 422 for /vllm/start.
     const origFetch = globalThis.fetch;

@@ -157,14 +157,19 @@ describe("CaseWizardFromCorpus", () => {
     expect(screen.getByText(/Article 3.2. Wheelbase/)).toBeInTheDocument();
   });
 
-  it("disables question + answer fields until a passage is anchored", async () => {
+  it("renders the empty-state panel (not the textareas) when no passage is anchored", async () => {
     const user = userEvent.setup();
     render(withProviders(<CaseWizardFromCorpus />));
     await user.click(screen.getByRole("button", { name: /fia-2026-regs\.md/ }));
-    const question = screen.getByLabelText(/^question/i);
-    const ground = screen.getByLabelText(/ground-truth answer/i);
-    expect(question).toBeDisabled();
-    expect(ground).toBeDisabled();
+    // The locked card 2 shows the explanatory empty-state, not textareas.
+    expect(screen.getByTestId("empty-state-no-anchor")).toBeInTheDocument();
+    expect(
+      screen.getByText(/click a passage above to start writing your case/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText(/^question/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText(/ground-truth answer/i),
+    ).not.toBeInTheDocument();
   });
 
   it("anchors the selected passage and enables the form", async () => {
@@ -287,9 +292,11 @@ describe("CaseWizardFromCorpus", () => {
     await waitFor(() => {
       expect(saveAsync).toHaveBeenCalled();
     });
-    // After save the question field is cleared, but the file rail still
-    // marks the file as selected so the SME can author another case.
-    expect(screen.getByLabelText(/^question/i)).toHaveValue("");
+    // After save the per-case fields are cleared by reverting to the locked
+    // empty-state (no passage anchored). The file rail still marks the file
+    // as selected so the SME can author another case.
+    expect(screen.getByTestId("empty-state-no-anchor")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/^question/i)).not.toBeInTheDocument();
     // Anchored banner is cleared because the passage is reset.
     expect(screen.queryByTestId("anchored-passage")).not.toBeInTheDocument();
   });
@@ -362,5 +369,128 @@ describe("CaseWizardFromCorpus", () => {
       expect(err).toBeDefined();
       expect(err!.message).toBe("Duplicate question");
     });
+  });
+});
+
+describe("CaseWizardFromCorpus — disabled→enabled transition", () => {
+  // Polyfill scrollIntoView in jsdom (the production code calls it when the
+  // "Highlight passage list" CTA is clicked).
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  it("shows the locked empty-state panel and hides the textareas before anchoring", async () => {
+    const user = userEvent.setup();
+    render(withProviders(<CaseWizardFromCorpus />));
+    await user.click(screen.getByRole("button", { name: /fia-2026-regs\.md/ }));
+    expect(screen.getByTestId("empty-state-no-anchor")).toBeInTheDocument();
+    expect(
+      screen.getByText(/click a passage above to start writing your case/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText(/^question/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText(/ground-truth answer/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the Save button disabled while the empty state is showing", async () => {
+    const user = userEvent.setup();
+    render(withProviders(<CaseWizardFromCorpus />));
+    await user.click(screen.getByRole("button", { name: /fia-2026-regs\.md/ }));
+    expect(
+      screen.getByRole("button", { name: /save case/i }),
+    ).toBeDisabled();
+  });
+
+  it('"Highlight passage list" toggles the pulse class on the list and clears it later', async () => {
+    const user = userEvent.setup();
+    render(withProviders(<CaseWizardFromCorpus />));
+    await user.click(screen.getByRole("button", { name: /fia-2026-regs\.md/ }));
+    const list = screen.getByTestId("from-corpus-passage-list");
+    expect(list).toHaveAttribute("data-pulse", "false");
+    await user.click(screen.getByTestId("highlight-passage-list"));
+    // The pulse flag is on immediately and the pulse class is applied.
+    expect(list).toHaveAttribute("data-pulse", "true");
+    expect(list.className).toMatch(/animate-pulse/);
+    // It clears itself after ~1.5s without any further user action.
+    await waitFor(
+      () => {
+        expect(list).toHaveAttribute("data-pulse", "false");
+      },
+      { timeout: 3000 },
+    );
+  });
+
+  it("clicking a passage removes the empty state and renders enabled textareas", async () => {
+    const user = userEvent.setup();
+    render(withProviders(<CaseWizardFromCorpus />));
+    await user.click(screen.getByRole("button", { name: /fia-2026-regs\.md/ }));
+    // Empty state first.
+    expect(screen.getByTestId("empty-state-no-anchor")).toBeInTheDocument();
+    await user.click(screen.getByText(/Article 3.1./));
+    // Empty state gone; textareas present and enabled.
+    expect(
+      screen.queryByTestId("empty-state-no-anchor"),
+    ).not.toBeInTheDocument();
+    const q = screen.getByLabelText(/^question/i);
+    const g = screen.getByLabelText(/ground-truth answer/i);
+    expect(q).toBeInTheDocument();
+    expect(g).toBeInTheDocument();
+    expect(q).not.toBeDisabled();
+    expect(g).not.toBeDisabled();
+  });
+
+  it("typed values land in the question and ground-truth fields after anchoring", async () => {
+    const user = userEvent.setup();
+    render(withProviders(<CaseWizardFromCorpus />));
+    await user.click(screen.getByRole("button", { name: /fia-2026-regs\.md/ }));
+    await user.click(screen.getByText(/Article 3.1./));
+    const q = screen.getByLabelText(/^question/i) as HTMLTextAreaElement;
+    const g = screen.getByLabelText(
+      /ground-truth answer/i,
+    ) as HTMLTextAreaElement;
+    await user.type(q, "How many drivers per constructor?");
+    await user.type(g, "Two.");
+    expect(q.value).toBe("How many drivers per constructor?");
+    expect(g.value).toBe("Two.");
+  });
+
+  it("the anchored-passage banner displays the selected passage with a Change button", async () => {
+    const user = userEvent.setup();
+    render(withProviders(<CaseWizardFromCorpus />));
+    await user.click(screen.getByRole("button", { name: /fia-2026-regs\.md/ }));
+    await user.click(screen.getByText(/Article 3.1./));
+    const banner = screen.getByTestId("anchored-passage");
+    expect(banner).toBeInTheDocument();
+    expect(banner).toHaveTextContent(/fia-2026-regs\.md/);
+    expect(banner).toHaveTextContent(/L1–10/);
+    expect(screen.getByTestId("change-anchor")).toBeInTheDocument();
+  });
+
+  it("clicking Change clears the textareas and re-shows the empty state", async () => {
+    const user = userEvent.setup();
+    render(withProviders(<CaseWizardFromCorpus />));
+    await user.click(screen.getByRole("button", { name: /fia-2026-regs\.md/ }));
+    await user.click(screen.getByText(/Article 3.1./));
+    // Type a value into the question field, then re-anchor.
+    await user.type(screen.getByLabelText(/^question/i), "Will be cleared");
+    await user.click(screen.getByTestId("change-anchor"));
+    // Empty state restored, textareas gone.
+    expect(screen.getByTestId("empty-state-no-anchor")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/^question/i)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("anchored-passage")).not.toBeInTheDocument();
+  });
+
+  it("after Change, re-anchoring a passage clears the previously-typed question", async () => {
+    const user = userEvent.setup();
+    render(withProviders(<CaseWizardFromCorpus />));
+    await user.click(screen.getByRole("button", { name: /fia-2026-regs\.md/ }));
+    await user.click(screen.getByText(/Article 3.1./));
+    await user.type(screen.getByLabelText(/^question/i), "Old value");
+    await user.click(screen.getByTestId("change-anchor"));
+    // Re-anchor on a different passage from the list.
+    await user.click(screen.getByText(/Article 3.2./));
+    const q = screen.getByLabelText(/^question/i) as HTMLTextAreaElement;
+    expect(q.value).toBe("");
   });
 });

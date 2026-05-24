@@ -3,8 +3,10 @@ import {
   ChevronLeft,
   ChevronRight,
   FileText,
+  MousePointerClick,
   Save,
   Quote,
+  RefreshCw,
 } from "lucide-react";
 import { Card } from "@/components/Card";
 import { Field, Select, TextArea } from "@/components/Field";
@@ -86,11 +88,16 @@ const PAGE_LIMIT = 20;
 const AUTOSAVE_INTERVAL_MS = 2000;
 const VALIDATE_DEBOUNCE_MS = 600;
 
+const HIGHLIGHT_PULSE_MS = 1500;
+
 export function CaseWizardFromCorpus() {
   const [draft, setDraft] = useState<DraftLocal>(() => newDraft());
   const [page, setPage] = useState(0);
   const [runPipeline, setRunPipeline] = useState(false);
+  const [pulseList, setPulseList] = useState(false);
   const pushToast = useUIStore((s) => s.pushToast);
+  const passageListRef = useRef<HTMLUListElement | null>(null);
+  const pulseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const files = useCorpusFiles();
   const passages = useCorpusPassagesPaginated(
@@ -211,6 +218,45 @@ export function CaseWizardFromCorpus() {
   const onSelectPassage = (p: Passage) => {
     setDraft((d) => ({ ...d, selectedPassage: p }));
   };
+
+  // Re-anchor: clears the passage and the per-case authoring fields so the
+  // user has to deliberately pick a fresh passage from the list. Validation
+  // state is reset too — the previous answer-text check no longer applies.
+  const onChangeAnchor = () => {
+    setDraft((d) => ({
+      ...d,
+      selectedPassage: null,
+      question: "",
+      ground_truth: "",
+      failure_category: "",
+      notes: "",
+    }));
+    validate.reset();
+  };
+
+  // "Highlight passage list" CTA: scroll the list into view and apply a
+  // short-lived pulsing ring so the eye is drawn to the thing the user has
+  // to click. Implemented as a state flag toggled off after ~1.5s.
+  const onHighlightPassageList = () => {
+    if (passageListRef.current) {
+      passageListRef.current.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    }
+    setPulseList(true);
+    if (pulseTimeoutRef.current) clearTimeout(pulseTimeoutRef.current);
+    pulseTimeoutRef.current = setTimeout(() => {
+      setPulseList(false);
+      pulseTimeoutRef.current = null;
+    }, HIGHLIGHT_PULSE_MS);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (pulseTimeoutRef.current) clearTimeout(pulseTimeoutRef.current);
+    };
+  }, []);
 
   const onSave = async () => {
     if (!canSave || draft.failure_category === "" || !draft.selectedPassage) return;
@@ -340,8 +386,14 @@ export function CaseWizardFromCorpus() {
           ) : (
             <>
               <ul
-                className="flex max-h-[40vh] flex-col gap-2 overflow-y-auto"
+                ref={passageListRef}
+                className={cn(
+                  "flex max-h-[40vh] flex-col gap-2 overflow-y-auto rounded-xl transition-shadow",
+                  pulseList &&
+                    "animate-pulse ring-4 ring-brand-300 ring-offset-2",
+                )}
                 data-testid="from-corpus-passage-list"
+                data-pulse={pulseList ? "true" : "false"}
               >
                 {passages.data.passages.map((p) => {
                   const isSelected =
@@ -352,27 +404,42 @@ export function CaseWizardFromCorpus() {
                         type="button"
                         onClick={() => onSelectPassage(p)}
                         className={cn(
-                          "w-full rounded-xl border p-3 text-left text-xs transition-colors",
+                          "group flex w-full cursor-pointer items-start gap-2 rounded-xl border p-3 text-left text-xs transition-colors",
                           isSelected
                             ? "border-emerald-400 bg-emerald-50"
-                            : "border-slate-200 bg-white hover:border-brand-300 hover:bg-brand-50",
+                            : "border-slate-200 bg-white hover:border-brand-300 hover:bg-slate-50",
                         )}
                         data-testid="from-corpus-passage"
                         aria-pressed={isSelected}
                       >
-                        <div className="mb-1 flex items-baseline justify-between gap-2">
-                          <span className="font-mono text-[10px] text-slate-500">
-                            L{p.line_start}–{p.line_end}
-                          </span>
-                          {isSelected && (
-                            <span className="rounded bg-emerald-200 px-1.5 py-0.5 text-[10px] font-medium text-emerald-900">
-                              Anchored
+                        <div className="min-w-0 flex-1">
+                          <div className="mb-1 flex items-baseline justify-between gap-2">
+                            <span className="font-mono text-[10px] text-slate-500">
+                              L{p.line_start}–{p.line_end}
                             </span>
-                          )}
+                            {isSelected ? (
+                              <span className="rounded bg-emerald-200 px-1.5 py-0.5 text-[10px] font-medium text-emerald-900">
+                                Anchored
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-slate-400 opacity-0 transition-opacity group-hover:opacity-100">
+                                Click to anchor
+                              </span>
+                            )}
+                          </div>
+                          <p className="whitespace-pre-wrap text-slate-700">
+                            {p.content}
+                          </p>
                         </div>
-                        <p className="whitespace-pre-wrap text-slate-700">
-                          {p.content}
-                        </p>
+                        <ChevronRight
+                          className={cn(
+                            "mt-0.5 h-4 w-4 shrink-0 transition-colors",
+                            isSelected
+                              ? "text-emerald-600"
+                              : "text-slate-300 group-hover:text-brand-500",
+                          )}
+                          aria-hidden="true"
+                        />
                       </button>
                     </li>
                   );
@@ -417,123 +484,166 @@ export function CaseWizardFromCorpus() {
           title="2. Write the question and answer"
           description={
             draft.selectedPassage
-              ? "Use the passage above as the source of truth."
-              : "Pick a passage to begin."
+              ? "Use the anchored passage as the source of truth."
+              : "Locked — pick a passage to begin."
           }
         >
-          {draft.selectedPassage && (
+          {!draft.selectedPassage ? (
             <div
-              className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3"
-              data-testid="anchored-passage"
+              className="flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 px-6 py-10 text-center"
+              data-testid="empty-state-no-anchor"
+              role="status"
             >
-              <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-emerald-900">
-                <Quote className="h-3.5 w-3.5" />
-                <span className="truncate font-mono">
-                  {draft.selectedPassage.path}{" "}
-                  <span className="font-normal text-emerald-700">
-                    L{draft.selectedPassage.line_start}–
-                    {draft.selectedPassage.line_end}
-                  </span>
-                </span>
-              </div>
-              <p className="whitespace-pre-wrap text-xs text-emerald-900">
-                {draft.selectedPassage.content}
+              <MousePointerClick
+                className="h-8 w-8 text-slate-400"
+                aria-hidden="true"
+              />
+              <p className="text-sm font-medium text-slate-700">
+                👆 Click a passage above to start writing your case.
               </p>
+              <p className="max-w-md text-xs text-slate-500">
+                The question and ground-truth boxes are locked until you anchor
+                a passage — that way every case has a verifiable source in the
+                corpus.
+              </p>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={onHighlightPassageList}
+                data-testid="highlight-passage-list"
+              >
+                Highlight passage list
+              </Button>
             </div>
-          )}
-
-          <div className="flex flex-col gap-5">
-            <Field
-              label="Question"
-              required
-              hint="What question would a user ask whose answer is in this passage?"
-            >
-              {(id) => (
-                <TextArea
-                  id={id}
-                  value={draft.question}
-                  onChange={(e) =>
-                    setDraft({ ...draft, question: e.target.value })
-                  }
-                  placeholder="A question the corpus can answer."
-                  rows={2}
-                  disabled={!draft.selectedPassage}
+          ) : (
+            <>
+              <div
+                className="mb-4 flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3"
+                data-testid="anchored-passage"
+              >
+                <Quote
+                  className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600"
+                  aria-hidden="true"
                 />
-              )}
-            </Field>
-
-            <Field
-              label="Ground-truth answer"
-              required
-              hint="In your own words, what does this passage say in answer to your question?"
-            >
-              {(id) => (
-                <TextArea
-                  id={id}
-                  value={draft.ground_truth}
-                  onChange={(e) =>
-                    setDraft({ ...draft, ground_truth: e.target.value })
-                  }
-                  placeholder="The correct answer, plain text. Must appear (verbatim or as a substring) in the passage."
-                  rows={3}
-                  disabled={!draft.selectedPassage}
-                />
-              )}
-            </Field>
-
-            <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-              <Field label="Category" required>
-                {(id) => (
-                  <>
-                    <Select
-                      id={id}
-                      value={draft.failure_category}
-                      onChange={(e) =>
-                        setDraft({
-                          ...draft,
-                          failure_category: e.target.value as
-                            | FailureCategory
-                            | "",
-                        })
-                      }
-                      disabled={!draft.selectedPassage}
+                <div className="min-w-0 flex-1">
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <span className="truncate font-mono text-xs font-semibold text-slate-800">
+                      {draft.selectedPassage.path}{" "}
+                      <span className="font-normal text-slate-500">
+                        L{draft.selectedPassage.line_start}–
+                        {draft.selectedPassage.line_end}
+                      </span>
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={onChangeAnchor}
+                      data-testid="change-anchor"
+                      aria-label="Change anchored passage"
                     >
-                      <option value="">Select…</option>
-                      {FAILURE_CATEGORIES.map((c) => (
-                        <option key={c} value={c}>
-                          {FAILURE_CATEGORY_LABELS[c].label}
-                        </option>
-                      ))}
-                    </Select>
-                    {draft.failure_category && (
-                      <p
-                        className="mt-1 text-xs text-slate-500"
-                        data-testid="category-description"
-                      >
-                        {
-                          FAILURE_CATEGORY_LABELS[draft.failure_category]
-                            .description
-                        }
-                      </p>
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      Change
+                    </Button>
+                  </div>
+                  <p className="whitespace-pre-wrap text-xs text-slate-700">
+                    {draft.selectedPassage.content}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-5">
+                <Field
+                  label="Question"
+                  required
+                  hint="What question would a user ask whose answer is in this passage?"
+                >
+                  {(id) => (
+                    <TextArea
+                      id={id}
+                      value={draft.question}
+                      onChange={(e) =>
+                        setDraft({ ...draft, question: e.target.value })
+                      }
+                      placeholder="A question the corpus can answer."
+                      rows={2}
+                    />
+                  )}
+                </Field>
+
+                <Field
+                  label="Ground-truth answer"
+                  required
+                  hint="In your own words, what does this passage say in answer to your question?"
+                >
+                  {(id) => (
+                    <TextArea
+                      id={id}
+                      value={draft.ground_truth}
+                      onChange={(e) =>
+                        setDraft({ ...draft, ground_truth: e.target.value })
+                      }
+                      placeholder="The correct answer, plain text. Must appear (verbatim or as a substring) in the passage."
+                      rows={3}
+                    />
+                  )}
+                </Field>
+
+                <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+                  <Field label="Category" required>
+                    {(id) => (
+                      <>
+                        <Select
+                          id={id}
+                          value={draft.failure_category}
+                          onChange={(e) =>
+                            setDraft({
+                              ...draft,
+                              failure_category: e.target.value as
+                                | FailureCategory
+                                | "",
+                            })
+                          }
+                        >
+                          <option value="">Select…</option>
+                          {FAILURE_CATEGORIES.map((c) => (
+                            <option key={c} value={c}>
+                              {FAILURE_CATEGORY_LABELS[c].label}
+                            </option>
+                          ))}
+                        </Select>
+                        {draft.failure_category && (
+                          <p
+                            className="mt-1 text-xs text-slate-500"
+                            data-testid="category-description"
+                          >
+                            {
+                              FAILURE_CATEGORY_LABELS[draft.failure_category]
+                                .description
+                            }
+                          </p>
+                        )}
+                      </>
                     )}
-                  </>
-                )}
-              </Field>
-              <Field label="Notes" hint="Optional free text for human readers.">
-                {(id) => (
-                  <TextArea
-                    id={id}
-                    rows={1}
-                    value={draft.notes}
-                    onChange={(e) =>
-                      setDraft({ ...draft, notes: e.target.value })
-                    }
-                    disabled={!draft.selectedPassage}
-                  />
-                )}
-              </Field>
-            </div>
-          </div>
+                  </Field>
+                  <Field
+                    label="Notes"
+                    hint="Optional free text for human readers."
+                  >
+                    {(id) => (
+                      <TextArea
+                        id={id}
+                        rows={1}
+                        value={draft.notes}
+                        onChange={(e) =>
+                          setDraft({ ...draft, notes: e.target.value })
+                        }
+                      />
+                    )}
+                  </Field>
+                </div>
+              </div>
+            </>
+          )}
         </Card>
 
         <div className="flex items-center justify-between">
