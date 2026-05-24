@@ -33,12 +33,16 @@ def project_tmp(monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture
-def client(project_tmp: Path):
+def client(project_tmp: Path, monkeypatch: pytest.MonkeyPatch):
     from fastapi.testclient import TestClient
 
-    from ui.backend.app import app
+    from ui.backend import app as app_mod
 
-    return TestClient(app)
+    # app.py captures PROJECT_ROOT + CONFIG_PATH at module import; the env var
+    # alone doesn't redirect them. Rebind for the test.
+    monkeypatch.setattr(app_mod, "PROJECT_ROOT", project_tmp)
+    monkeypatch.setattr(app_mod, "CONFIG_PATH", project_tmp / "bratan.config.yaml")
+    return TestClient(app_mod.app)
 
 
 def test_setup_state_when_empty(client) -> None:

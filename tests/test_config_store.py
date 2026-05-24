@@ -24,7 +24,7 @@ def cfg_path(tmp_path: Path) -> Path:
 def test_load_missing_file_returns_defaults(cfg_path: Path) -> None:
     assert not cfg_path.exists()
     cfg = load(cfg_path)
-    assert cfg.project.project_name == "rag-refiner"
+    assert cfg.project.project_name == "bratan"
     assert cfg.project.seed_target_n == 50
     assert cfg.vector_db.adapter.value == "chroma"
 

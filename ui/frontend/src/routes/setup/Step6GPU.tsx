@@ -11,11 +11,40 @@ interface Props {
   config: BratanConfig | null;
 }
 
-const ROUGH_MODEL_VRAM_MB: Record<string, number> = {
-  embedding: 1300,
-  reranker: 2300,
-  prejudge: 20_000,
-};
+/**
+ * Rough VRAM cost (MB) for each *checkpoint family*, keyed by substring match
+ * on the model id the user selected in Step 3. The table is intentionally
+ * approximate — its job is to flag "you picked a 20 GB model on a 16 GB card",
+ * not to predict exact bf16 + KV-cache footprint.
+ */
+const VRAM_TABLE: Array<{ match: RegExp; mb: number }> = [
+  // Embedding
+  { match: /bge-small/i, mb: 130 },
+  { match: /bge-base/i, mb: 440 },
+  { match: /bge-large/i, mb: 1300 },
+  // Reranker
+  { match: /bge-reranker-v2-m3/i, mb: 2300 },
+  { match: /bge-reranker/i, mb: 2000 },
+  // Pre-judge / generation
+  { match: /Qwen2\.5-7B/i, mb: 5_000 },
+  { match: /Qwen2\.5-14B/i, mb: 20_000 },
+  { match: /Qwen2\.5-32B/i, mb: 40_000 },
+  { match: /Llama-3.*8B/i, mb: 6_000 },
+];
+
+function estimateMb(modelId: string, fallbackMb: number): number {
+  for (const { match, mb } of VRAM_TABLE) {
+    if (match.test(modelId)) return mb;
+  }
+  return fallbackMb;
+}
+
+interface BreakdownRow {
+  key: "embedding" | "reranker" | "prejudge";
+  label: string;
+  model: string;
+  mb: number;
+}
 
 export function Step6GPU({ config }: Props) {
   const probe = useProbe();
@@ -27,11 +56,34 @@ export function Step6GPU({ config }: Props) {
   }, []);
 
   const data = probe.data;
-  const wantedMb = config
-    ? (config.models.use_local_embedding ? ROUGH_MODEL_VRAM_MB.embedding : 0) +
-      (config.models.use_local_reranker ? ROUGH_MODEL_VRAM_MB.reranker : 0) +
-      (config.models.use_local_prejudge ? ROUGH_MODEL_VRAM_MB.prejudge : 0)
-    : 0;
+
+  // Only count models the user actually toggled ON in Step 3.
+  const breakdown: BreakdownRow[] = [];
+  if (config?.models.use_local_embedding) {
+    breakdown.push({
+      key: "embedding",
+      label: "Embedding",
+      model: config.models.embedding_model,
+      mb: estimateMb(config.models.embedding_model, 1300),
+    });
+  }
+  if (config?.models.use_local_reranker) {
+    breakdown.push({
+      key: "reranker",
+      label: "Reranker",
+      model: config.models.reranker_model,
+      mb: estimateMb(config.models.reranker_model, 2300),
+    });
+  }
+  if (config?.models.use_local_prejudge) {
+    breakdown.push({
+      key: "prejudge",
+      label: "Pre-judge",
+      model: config.models.prejudge_model,
+      mb: estimateMb(config.models.prejudge_model, 5_000),
+    });
+  }
+  const wantedMb = breakdown.reduce((acc, row) => acc + row.mb, 0);
   const vramOk = data?.gpu.vram_total_mb != null && data.gpu.vram_total_mb >= wantedMb;
 
   return (
@@ -81,15 +133,52 @@ export function Step6GPU({ config }: Props) {
         ) : null}
       </Card>
 
-      {data?.gpu.vram_total_mb != null && !vramOk && (
-        <div className="flex items-start gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-amber-900">
+      {breakdown.length > 0 && (
+        <Card
+          title="Selected local models"
+          description="Rough VRAM cost per model you toggled on in Step 3. Models toggled off don't count."
+        >
+          <ul
+            data-testid="vram-breakdown"
+            className="divide-y divide-slate-200 rounded-xl border border-slate-200 bg-white"
+          >
+            {breakdown.map((row) => (
+              <li
+                key={row.key}
+                data-testid={`vram-row-${row.key}`}
+                className="flex items-center justify-between px-4 py-2 text-sm"
+              >
+                <div>
+                  <p className="font-medium text-slate-800">{row.label}</p>
+                  <p className="text-xs text-slate-500">{row.model}</p>
+                </div>
+                <span className="font-mono text-slate-700" data-testid={`vram-mb-${row.key}`}>
+                  {row.mb} MB
+                </span>
+              </li>
+            ))}
+            <li className="flex items-center justify-between px-4 py-2 text-sm font-semibold text-slate-900">
+              <span>Total</span>
+              <span className="font-mono" data-testid="vram-total-mb">
+                {wantedMb} MB
+              </span>
+            </li>
+          </ul>
+        </Card>
+      )}
+
+      {data?.gpu.vram_total_mb != null && wantedMb > 0 && !vramOk && (
+        <div
+          className="flex items-start gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-amber-900"
+          data-testid="vram-warning"
+        >
           <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
           <div>
             <p className="font-medium">VRAM may be insufficient.</p>
             <p className="mt-1 text-sm">
               Selected local models need roughly {wantedMb} MB; detected{" "}
               {data.gpu.vram_total_mb} MB total. Consider unchecking some local toggles in
-              Step 3 or running embed/rerank on CPU.
+              Step 3, picking smaller checkpoints, or running embed/rerank on CPU.
             </p>
           </div>
         </div>

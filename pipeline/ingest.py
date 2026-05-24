@@ -17,6 +17,7 @@ import os
 import re
 import sys
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -102,6 +103,8 @@ class _TaskState:
     files_done: int = 0
     chunks_written: int = 0
     error: str | None = None
+    current_file: str | None = None
+    started_at: float | None = None  # monotonic seconds, used for chunks/sec
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 
@@ -122,6 +125,8 @@ def start_ingest_task(cfg: BratanConfig) -> IngestStatus:
         _TASK.files_done = 0
         _TASK.chunks_written = 0
         _TASK.error = None
+        _TASK.current_file = None
+        _TASK.started_at = time.monotonic()
 
     thread = threading.Thread(target=_run_ingest, args=(cfg,), daemon=True)
     thread.start()
@@ -134,6 +139,11 @@ def get_ingest_status() -> IngestStatus:
 
 def _snapshot() -> IngestStatus:
     with _TASK.lock:
+        chunks_per_sec: float | None = None
+        if _TASK.started_at is not None and _TASK.chunks_written > 0:
+            elapsed = time.monotonic() - _TASK.started_at
+            if elapsed > 0:
+                chunks_per_sec = round(_TASK.chunks_written / elapsed, 2)
         return IngestStatus(
             state=_TASK.state,  # type: ignore[arg-type]
             task_id=_TASK.task_id,
@@ -141,6 +151,8 @@ def _snapshot() -> IngestStatus:
             files_done=_TASK.files_done,
             chunks_written=_TASK.chunks_written,
             error=_TASK.error,
+            current_file=_TASK.current_file,
+            chunks_per_sec=chunks_per_sec,
         )
 
 
@@ -150,11 +162,13 @@ def _run_ingest(cfg: BratanConfig) -> None:
         with _TASK.lock:
             _TASK.state = "succeeded"
             _TASK.chunks_written = chunks_written
+            _TASK.current_file = None
     except Exception as exc:
         logger.exception("Ingest failed")
         with _TASK.lock:
             _TASK.state = "failed"
             _TASK.error = str(exc)
+            _TASK.current_file = None
 
 
 # ---------------------------------------------------------------------------
@@ -183,6 +197,8 @@ def _ingest_sync(cfg: BratanConfig) -> int:
     chunks_written = 0
     for fp in files:
         rel = fp.relative_to(corpus_path).as_posix()
+        with _TASK.lock:
+            _TASK.current_file = rel
         try:
             text = _load_text(fp)
             chunks = _chunk_text(text, chunk_size, overlap, separators)

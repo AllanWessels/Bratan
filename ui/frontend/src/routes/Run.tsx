@@ -46,7 +46,7 @@ export function Run() {
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-[1400px] items-center justify-between px-6 py-4">
           <Link to="/" className="block">
-            <h1 className="text-lg font-semibold text-slate-900">RAG Refiner</h1>
+            <h1 className="text-lg font-semibold text-slate-900">Bratan</h1>
             <p className="text-xs text-slate-500">Live run dashboard</p>
           </Link>
           <nav className="flex items-center gap-3 text-sm">

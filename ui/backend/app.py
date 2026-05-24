@@ -51,9 +51,9 @@ PROJECT_ROOT = Path(os.environ.get("BRATAN_PROJECT_ROOT", Path(__file__).resolve
 CONFIG_PATH = PROJECT_ROOT / "bratan.config.yaml"
 
 app = FastAPI(
-    title="RAG Refiner",
+    title="Bratan",
     version="0.1.0",
-    description="Self-improving RAG pipeline driven by red-team / blue-team / judge agents.",
+    description="Bratan — a self-improving RAG pipeline driven by red-team / blue-team / judge agents.",
 )
 
 app.add_middleware(
@@ -393,5 +393,5 @@ async def loop_stream(ws: WebSocket) -> None:
 
 @app.on_event("startup")
 def on_startup() -> None:
-    logger.info("RAG Refiner API starting at %s", PROJECT_ROOT)
+    logger.info("Bratan API starting at %s", PROJECT_ROOT)
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)

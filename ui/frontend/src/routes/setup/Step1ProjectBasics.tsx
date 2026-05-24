@@ -9,7 +9,7 @@ interface Props {
 }
 
 const DEFAULTS: ProjectBasics = {
-  project_name: "rag-refiner",
+  project_name: "bratan",
   corpus_path: "./corpus",
   seed_target_n: 50,
 };

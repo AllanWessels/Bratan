@@ -10,7 +10,9 @@ import { formatBytes } from "@/lib/format";
 export function CorpusBrowser() {
   const files = useCorpusFiles();
   const startIngest = useStartIngest();
-  const status = useIngestStatus(2000);
+  // Poll faster while running so the UI doesn't look frozen on multi-file
+  // ingests where the per-file work dominates.
+  const status = useIngestStatus(500);
   const pushToast = useUIStore((s) => s.pushToast);
 
   const ingestRunning = status.data?.state === "running";
@@ -40,29 +42,58 @@ export function CorpusBrowser() {
           onClick={() => startIngest.mutate()}
           loading={startIngest.isPending || ingestRunning}
           disabled={ingestRunning}
+          data-testid="ingest-corpus"
         >
           <Play className="h-3.5 w-3.5" /> Ingest corpus
         </Button>
+        <span data-testid="ingest-status" className="sr-only">
+          {status.data?.state ?? "idle"}
+        </span>
         {ingestRunning && (
-          <div className="text-xs text-slate-600">
+          <div className="text-xs text-slate-600" data-testid="ingest-progress">
             <div className="mb-1 flex justify-between">
               <span>
                 {status.data?.files_done ?? 0} / {status.data?.files_total ?? 0} files
               </span>
               <span className="font-mono">
                 {status.data?.chunks_written ?? 0} chunks
+                {status.data?.chunks_per_sec != null && (
+                  <span className="ml-2 text-slate-500">
+                    ({status.data.chunks_per_sec.toFixed(1)}/s)
+                  </span>
+                )}
               </span>
             </div>
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+            {status.data?.current_file && (
+              <p
+                className="mb-1 truncate text-[11px] text-slate-500"
+                title={status.data.current_file}
+                data-testid="ingest-current-file"
+              >
+                Processing {status.data.current_file}
+              </p>
+            )}
+            <div className="relative h-2 w-full overflow-hidden rounded-full bg-slate-200">
               <div
-                className="h-full rounded-full bg-brand-600 transition-all"
+                className="h-full rounded-full bg-brand-600 transition-all duration-300"
                 style={{
                   width: `${
                     status.data && status.data.files_total > 0
-                      ? (status.data.files_done / status.data.files_total) * 100
-                      : 0
+                      ? Math.max(
+                          (status.data.files_done / status.data.files_total) * 100,
+                          // Always show *some* progress so a 1-file ingest
+                          // doesn't sit at 0%; pulse fills the rest.
+                          5,
+                        )
+                      : 8
                   }%`,
                 }}
+              />
+              {/* Indeterminate shimmer overlay so the bar visibly moves even
+                  when files_total is small. */}
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 animate-pulse bg-gradient-to-r from-transparent via-white/40 to-transparent"
               />
             </div>
           </div>

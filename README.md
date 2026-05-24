@@ -100,9 +100,11 @@ the loop, not the premise. The premise is the loop.
   [`skills/`](https://github.com/anthropics/skills) pattern, the
   canonical agent-system idiom of 2026.
 - **Your RAG, your DB, our optimizer.** A thin `VectorDBAdapter` is the
-  only swap point. Today it ships with ChromaDB; Qdrant / Pinecone /
-  Weaviate / pgvector are scaffolded. Everything above that line is the
-  Blue Team's playground.
+  only swap point. Bratan ships five functional adapters out of the box
+  — ChromaDB, Qdrant, Pinecone, Weaviate, and pgvector — plus an
+  **Other** option for any backend not in that list (subclass
+  `VectorDBAdapter`, point the wizard at your module). Everything
+  above that line is the Blue Team's playground.
 
 ---
 
@@ -397,7 +399,8 @@ bratan.config.yaml    user-owned project config (setup wizard writes this)
   adapters/           VectorDBAdapter (the swap point)
     base.py
     chroma.py             ← default, ships with M1
-    qdrant.py / pinecone.py / weaviate.py / pgvector.py  ← scaffolded, M5
+    qdrant.py / pinecone.py / weaviate.py / pgvector.py  ← functional
+    (custom backends plug in via docs/custom-adapter.md)
   prompts/            generation + grading templates
   CHANGELOG.md        blue-team's rationale log
 /test_cases/          append-only
@@ -421,6 +424,10 @@ bratan.config.yaml    user-owned project config (setup wizard writes this)
   test_judge.py            (13)
   test_metrics_and_stop.py (11)
   test_chroma_adapter.py   (9)
+  test_qdrant_adapter.py   (13)
+  test_pinecone_adapter.py (22)
+  test_weaviate_adapter.py (20)
+  test_pgvector_adapter.py (21)
   test_loop_orchestrator.py(9)
   test_ingest.py           (16)
   test_config_store.py     (15)

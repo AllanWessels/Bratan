@@ -68,7 +68,7 @@ export function PassagePicker({ query, selected, onAdd, onRemove }: PassagePicke
           No matching passages. Try rephrasing the question.
         </div>
       )}
-      <ul className="flex max-h-[50vh] flex-col gap-2 overflow-y-auto">
+      <ul className="flex max-h-[50vh] flex-col gap-2 overflow-y-auto" data-testid="passage-results">
         {passages.map((p) => {
           const key = `${p.path}:${p.line_start}-${p.line_end}`;
           const isSelected = selected.some((s) => sameRef(s, p));
@@ -76,6 +76,7 @@ export function PassagePicker({ query, selected, onAdd, onRemove }: PassagePicke
           return (
             <li
               key={key}
+              data-testid="passage-result"
               className={cn(
                 "rounded-xl border bg-white transition-colors",
                 isSelected ? "border-emerald-400 bg-emerald-50" : "border-slate-200",

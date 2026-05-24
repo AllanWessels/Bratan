@@ -39,10 +39,13 @@ class FailureCategory(str, Enum):
 
 class VectorDBAdapter(str, Enum):
     CHROMA = "chroma"
-    QDRANT = "qdrant"       # scaffolded in M1, functional in M5
-    PINECONE = "pinecone"   # M5
-    WEAVIATE = "weaviate"   # M5
-    PGVECTOR = "pgvector"   # M5
+    QDRANT = "qdrant"
+    PINECONE = "pinecone"
+    WEAVIATE = "weaviate"
+    PGVECTOR = "pgvector"
+    # "other" lets users plug in their own VectorDBAdapter subclass by Python
+    # path; see docs/custom-adapter.md.
+    OTHER = "other"
 
 
 class StopCriteria(BaseModel):
@@ -70,8 +73,10 @@ class ModelConfig(BaseModel):
     anthropic_api_key: str = ""
     oracle_model: str = "claude-sonnet-4-20250514"
     vllm_base_url: str = "http://localhost:8001"
-    prejudge_model: str = "Qwen/Qwen2.5-14B-Instruct-AWQ"
-    embedding_model: str = "BAAI/bge-large-en-v1.5"
+    # Defaults are tuned to fit comfortably on a 16 GB consumer GPU; users with
+    # more headroom can pick larger checkpoints in Step 3.
+    prejudge_model: str = "Qwen/Qwen2.5-7B-Instruct-AWQ"
+    embedding_model: str = "BAAI/bge-small-en-v1.5"
     reranker_model: str = "BAAI/bge-reranker-v2-m3"
     use_local_embedding: bool = True
     use_local_reranker: bool = True
@@ -82,17 +87,29 @@ class VectorDBConfig(BaseModel):
     adapter: VectorDBAdapter = VectorDBAdapter.CHROMA
     chroma_path: str = "./.chroma"
     chroma_collection: str = "corpus"
-    # other adapters store their own fields here in M5
+    # Qdrant.
     qdrant_url: str | None = None
     qdrant_api_key: str | None = None
+    # Pinecone.
     pinecone_api_key: str | None = None
     pinecone_index: str | None = None
+    pinecone_cloud: str = "aws"
+    pinecone_region: str = "us-east-1"
+    pinecone_namespace: str = ""
+    # Weaviate.
     weaviate_url: str | None = None
+    weaviate_api_key: str | None = None
+    weaviate_collection: str = "Bratan"
+    # pgvector.
     pgvector_dsn: str | None = None
+    pgvector_table: str = "bratan_chunks"
+    # "Other": user-provided VectorDBAdapter subclass, resolved via importlib.
+    other_adapter_module: str | None = None
+    other_adapter_class: str | None = None
 
 
 class ProjectBasics(BaseModel):
-    project_name: str = "rag-refiner"
+    project_name: str = "bratan"
     corpus_path: str = "./corpus"
     seed_target_n: int = Field(50, ge=10, le=500)
 
@@ -208,6 +225,11 @@ class IngestStatus(BaseModel):
     files_done: int = 0
     chunks_written: int = 0
     error: str | None = None
+    # File currently being chunked + embedded, surfaced so the UI can show
+    # "Processing foo.pdf..." instead of staring at a frozen progress bar.
+    current_file: str | None = None
+    # Throughput (chunks/sec) computed from a monotonic start timestamp.
+    chunks_per_sec: float | None = None
 
 
 # ---------------------------------------------------------------------------

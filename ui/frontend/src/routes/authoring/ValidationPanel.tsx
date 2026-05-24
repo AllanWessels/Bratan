@@ -40,7 +40,7 @@ export function ValidationPanel({
           Add a question, passages, and ground-truth answer to run validation.
         </p>
       ) : (
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-3" data-testid="validation-result" data-valid={result.passages_in_top_k && result.answer_text_in_passages ? "true" : "false"}>
           <ValidationRow
             ok={result.passages_in_top_k}
             label="Passages retrievable in top-5"

@@ -1,5 +1,5 @@
 {
-  "name": "rag-refiner-ui",
+  "name": "bratan-ui",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -11,7 +11,9 @@
     "lint": "eslint . --ext .ts,.tsx",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.51.0",
@@ -24,10 +26,13 @@
     "zustand": "^4.5.4"
   },
   "devDependencies": {
+    "@playwright/test": "1.49.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^20.14.10",
+    "js-yaml": "^4.1.0",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@typescript-eslint/eslint-plugin": "^7.16.0",

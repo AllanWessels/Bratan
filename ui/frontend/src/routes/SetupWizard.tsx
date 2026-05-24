@@ -96,7 +96,7 @@ export function SetupWizard() {
       <aside className="w-64 shrink-0">
         <div className="sticky top-10">
           <Link to="/" className="mb-6 block">
-            <h1 className="text-xl font-semibold text-slate-900">RAG Refiner</h1>
+            <h1 className="text-xl font-semibold text-slate-900">Bratan</h1>
             <p className="text-sm text-slate-500">Setup wizard</p>
           </Link>
           <StepIndicator current={step} completed={completed} />
@@ -107,6 +107,7 @@ export function SetupWizard() {
               className="w-full justify-start text-slate-600"
               onClick={onSkip}
               loading={finishMutation.isPending}
+              data-testid="skip-to-defaults"
             >
               <FastForward className="h-4 w-4" />
               Skip to defaults
@@ -126,11 +127,20 @@ export function SetupWizard() {
         {StepComponent && <StepComponent config={cfg.data ?? null} />}
 
         <div className="mt-8 flex items-center justify-between">
-          <Button variant="secondary" onClick={onPrev} disabled={step === 1}>
+          <Button
+            variant="secondary"
+            onClick={onPrev}
+            disabled={step === 1}
+            data-testid="wizard-prev"
+          >
             <ChevronLeft className="h-4 w-4" />
             Previous
           </Button>
-          <Button onClick={onNext} loading={finishMutation.isPending}>
+          <Button
+            onClick={onNext}
+            loading={finishMutation.isPending}
+            data-testid="wizard-next"
+          >
             {step === TOTAL_STEPS ? "Finish setup" : "Next"}
             {step !== TOTAL_STEPS && <ChevronRight className="h-4 w-4" />}
           </Button>

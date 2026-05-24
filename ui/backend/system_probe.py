@@ -18,7 +18,6 @@ from ui.backend.schemas import (
     TestAnthropicRequest,
     TestVectorDBRequest,
     TestVLLMRequest,
-    VectorDBAdapter,
 )
 
 logger = logging.getLogger(__name__)
@@ -92,12 +91,12 @@ def _ping_vllm(base_url: str, timeout: float = 1.0) -> bool:
 
 
 def test_vectordb(req: TestVectorDBRequest) -> ConnectionTest:
-    if req.adapter != VectorDBAdapter.CHROMA:
-        return ConnectionTest(
-            ok=False,
-            error=f"Adapter '{req.adapter.value}' ships in M5; only chroma is enabled in M1.",
-        )
-    cfg = BratanConfig(vector_db=req.config)
+    # Keep the request's adapter and the config's adapter aligned; the
+    # wizard sometimes sends them separately and the factory dispatches off
+    # the config field.
+    cfg_data = req.config.model_dump()
+    cfg_data["adapter"] = req.adapter
+    cfg = BratanConfig(vector_db=cfg_data)
     t0 = time.perf_counter()
     try:
         from pipeline.factories import get_vectordb
@@ -118,7 +117,9 @@ def test_anthropic(req: TestAnthropicRequest) -> ConnectionTest:
     try:
         from anthropic import Anthropic
 
-        client = Anthropic(api_key=req.api_key)
+        # Hard 10s ceiling: an unreachable network or a paused API would
+        # otherwise hang the wizard's "Test" button indefinitely.
+        client = Anthropic(api_key=req.api_key, timeout=10.0, max_retries=0)
         resp = client.messages.create(
             model=req.model,
             max_tokens=1,

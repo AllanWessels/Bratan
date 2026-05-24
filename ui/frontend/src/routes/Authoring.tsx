@@ -30,7 +30,7 @@ export function Authoring() {
         <div className="mx-auto flex max-w-[1400px] items-center justify-between px-6 py-4">
           <div>
             <Link to="/" className="block">
-              <h1 className="text-lg font-semibold text-slate-900">RAG Refiner</h1>
+              <h1 className="text-lg font-semibold text-slate-900">Bratan</h1>
               <p className="text-xs text-slate-500">Seed case authoring</p>
             </Link>
           </div>

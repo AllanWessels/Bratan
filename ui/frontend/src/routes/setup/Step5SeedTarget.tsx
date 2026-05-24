@@ -11,7 +11,7 @@ interface Props {
 export function Step5SeedTarget({ config }: Props) {
   const [data, setData] = useState<ProjectBasics>(
     config?.project ?? {
-      project_name: "rag-refiner",
+      project_name: "bratan",
       corpus_path: "./corpus",
       seed_target_n: 50,
     },

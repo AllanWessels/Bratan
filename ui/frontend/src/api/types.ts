@@ -23,6 +23,7 @@ export const VECTOR_DB_ADAPTERS = [
   "pinecone",
   "weaviate",
   "pgvector",
+  "other",
 ] as const;
 export type VectorDBAdapter = (typeof VECTOR_DB_ADAPTERS)[number];
 
@@ -63,12 +64,25 @@ export interface VectorDBConfig {
   adapter: VectorDBAdapter;
   chroma_path: string;
   chroma_collection: string;
+  // Qdrant
   qdrant_url?: string | null;
   qdrant_api_key?: string | null;
+  // Pinecone
   pinecone_api_key?: string | null;
   pinecone_index?: string | null;
+  pinecone_cloud?: string;
+  pinecone_region?: string;
+  pinecone_namespace?: string;
+  // Weaviate
   weaviate_url?: string | null;
+  weaviate_api_key?: string | null;
+  weaviate_collection?: string;
+  // pgvector
   pgvector_dsn?: string | null;
+  pgvector_table?: string;
+  // Other — user-provided VectorDBAdapter subclass.
+  other_adapter_module?: string | null;
+  other_adapter_class?: string | null;
 }
 
 export interface ProjectBasics {
@@ -177,6 +191,8 @@ export interface IngestStatus {
   files_done: number;
   chunks_written: number;
   error: string | null;
+  current_file?: string | null;
+  chunks_per_sec?: number | null;
 }
 
 // Seed authoring — PassageRef field names follow test_cases/schema.md

@@ -3,7 +3,12 @@ import { Eye, EyeOff } from "lucide-react";
 import { Card } from "@/components/Card";
 import { Field, TextInput } from "@/components/Field";
 import { Button } from "@/components/Button";
-import { ConnectionBadge } from "@/components/ConnectionBadge";
+import {
+  ConnectionBadge,
+  explainAnthropicError,
+  explainVLLMError,
+  type ConnectionState,
+} from "@/components/ConnectionBadge";
 import { useTestAnthropic, useTestVLLM } from "@/api/hooks";
 import type { BratanConfig, ModelConfig } from "@/api/types";
 import { cn } from "@/lib/cn";
@@ -17,8 +22,8 @@ const DEFAULTS: ModelConfig = {
   anthropic_api_key: "",
   oracle_model: "claude-sonnet-4-20250514",
   vllm_base_url: "http://localhost:8001",
-  prejudge_model: "Qwen/Qwen2.5-14B-Instruct-AWQ",
-  embedding_model: "BAAI/bge-large-en-v1.5",
+  prejudge_model: "Qwen/Qwen2.5-7B-Instruct-AWQ",
+  embedding_model: "BAAI/bge-small-en-v1.5",
   reranker_model: "BAAI/bge-reranker-v2-m3",
   use_local_embedding: true,
   use_local_reranker: true,
@@ -73,7 +78,7 @@ export function Step3Models({ config }: Props) {
 
   useAutoSaveStep(3, data);
 
-  const anthropicBadge: "idle" | "testing" | "ok" | "fail" = anthropicTest.isPending
+  const anthropicBadge: ConnectionState = anthropicTest.isPending
     ? "testing"
     : anthropicTest.data
       ? anthropicTest.data.ok
@@ -81,12 +86,17 @@ export function Step3Models({ config }: Props) {
         : "fail"
       : "idle";
 
-  const vllmBadge: "idle" | "testing" | "ok" | "fail" = vllmTest.isPending
+  // vLLM is optional — connection-refused is a soft warning, not a failure.
+  const vllmDiagnosis =
+    vllmTest.data && !vllmTest.data.ok ? explainVLLMError(vllmTest.data.error) : null;
+  const vllmBadge: ConnectionState = vllmTest.isPending
     ? "testing"
     : vllmTest.data
       ? vllmTest.data.ok
         ? "ok"
-        : "fail"
+        : vllmDiagnosis?.severity === "warn"
+          ? "warn"
+          : "fail"
       : "idle";
 
   return (
@@ -98,7 +108,7 @@ export function Step3Models({ config }: Props) {
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <Toggle
             label="Local embedding"
-            hint="bge-large-en-v1.5 on your GPU."
+            hint="bge-small-en-v1.5 on your GPU (~130 MB)."
             checked={data.use_local_embedding}
             onChange={(v) => setData({ ...data, use_local_embedding: v })}
           />
@@ -163,13 +173,18 @@ export function Step3Models({ config }: Props) {
               </div>
             )}
           </Field>
-          <div className="flex items-center gap-3">
+          <div className="flex items-start gap-3" data-testid="anthropic-result">
             <ConnectionBadge
               state={anthropicBadge}
               latencyMs={anthropicTest.data?.latency_ms ?? null}
             />
             {anthropicTest.data && !anthropicTest.data.ok && anthropicTest.data.error && (
-              <span className="text-xs text-red-600">{anthropicTest.data.error}</span>
+              <span
+                className="text-xs text-red-600"
+                data-testid="anthropic-error-message"
+              >
+                {explainAnthropicError(anthropicTest.data.error)}
+              </span>
             )}
           </div>
 
@@ -215,10 +230,18 @@ export function Step3Models({ config }: Props) {
               </div>
             )}
           </Field>
-          <div className="flex items-center gap-3">
+          <div className="flex items-start gap-3" data-testid="vllm-result">
             <ConnectionBadge state={vllmBadge} latencyMs={vllmTest.data?.latency_ms ?? null} />
-            {vllmTest.data && !vllmTest.data.ok && vllmTest.data.error && (
-              <span className="text-xs text-red-600">{vllmTest.data.error}</span>
+            {vllmDiagnosis && (
+              <span
+                className={cn(
+                  "text-xs",
+                  vllmDiagnosis.severity === "warn" ? "text-amber-700" : "text-red-600",
+                )}
+                data-testid="vllm-error-message"
+              >
+                {vllmDiagnosis.message}
+              </span>
             )}
           </div>
 

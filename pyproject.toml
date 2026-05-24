@@ -1,7 +1,7 @@
 [project]
 name = "bratan"
 version = "0.0.1"
-description = "RAG Refiner: a self-improving RAG pipeline driven by red-team / blue-team / judge agents"
+description = "Bratan: a self-improving RAG pipeline driven by red-team / blue-team / judge agents"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }

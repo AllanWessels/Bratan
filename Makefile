@@ -1,9 +1,9 @@
-.PHONY: help sync ui ui-backend ui-frontend ingest eval loop lint test format clean
+.PHONY: help sync ui ui-backend ui-frontend ingest eval loop lint test test-e2e format clean
 
 UV := uv
 
 help:
-	@echo "RAG Refiner — make targets"
+	@echo "Bratan — make targets"
 	@echo "  sync          Install/refresh Python deps with uv"
 	@echo "  ui            Launch the FastAPI backend + Vite frontend (dev mode)"
 	@echo "  ui-backend    Backend only (port 8000)"
@@ -13,7 +13,8 @@ help:
 	@echo "  loop          Run one red->blue->judge iteration"
 	@echo "  lint          ruff check + mypy"
 	@echo "  format        ruff format"
-	@echo "  test          pytest"
+	@echo "  test          pytest + frontend unit + Playwright E2E"
+	@echo "  test-e2e      Just the Playwright browser suite"
 	@echo "  clean         Remove caches and build artifacts"
 
 sync:
@@ -50,6 +51,13 @@ format:
 test:
 	$(UV) run pytest -q
 	cd ui/frontend && npm test --silent
+	$(MAKE) test-e2e
+
+# Browser-based E2E. Playwright spins up its own webServers (vite preview on
+# 4173 and `uv run uvicorn` on 8000); reuseExistingServer is true so this is
+# a no-op start if you already have `make ui` running.
+test-e2e:
+	cd ui/frontend && npm run test:e2e --silent
 
 clean:
 	rm -rf .pytest_cache .ruff_cache .mypy_cache .cache
