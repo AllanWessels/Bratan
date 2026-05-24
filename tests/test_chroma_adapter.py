@@ -98,3 +98,51 @@ def test_flatten_metadata_coerces_non_scalars() -> None:
     assert flat["none"] is None
     # lists/dicts get coerced to strings (Chroma constraint)
     assert isinstance(flat["lst"], str)
+
+
+# ---------------------------------------------------------------------------
+# Recovery — regression for the "no such table: tenants" error the user hit
+# when the .chroma dir got wiped under a stale chromadb client.
+# ---------------------------------------------------------------------------
+
+
+def test_with_recovery_only_swallows_recoverable_errors(adapter: ChromaAdapter) -> None:
+    def boom_unrecoverable() -> None:
+        raise RuntimeError("totally unrelated bug")
+
+    with pytest.raises(RuntimeError, match="totally unrelated"):
+        adapter._with_recovery(boom_unrecoverable)
+
+
+def test_with_recovery_recognizes_no_such_table(adapter: ChromaAdapter) -> None:
+    """The exact error string the user hit must be classified recoverable."""
+    from pipeline.adapters.chroma import _RECOVERABLE_MARKERS
+
+    err = "Database error: error returned from database: (code: 1) no such table: tenants"
+    assert any(marker in err for marker in _RECOVERABLE_MARKERS)
+
+
+def test_with_recovery_recognizes_readonly_database(adapter: ChromaAdapter) -> None:
+    """The follow-on error (when the on-disk dir vanishes) is also recoverable."""
+    from pipeline.adapters.chroma import _RECOVERABLE_MARKERS
+
+    err = "Database error: error returned from database: (code: 1032) attempt to write a readonly database"
+    assert any(marker in err for marker in _RECOVERABLE_MARKERS)
+
+
+def test_with_recovery_retries_then_succeeds(adapter: ChromaAdapter) -> None:
+    """A recoverable error followed by success must return the success value."""
+    state = {"calls": 0}
+
+    def boom_once_then_ok() -> int:
+        state["calls"] += 1
+        if state["calls"] == 1:
+            raise Exception("no such table: tenants")
+        return 99
+
+    # Patch _recover so we don't actually nuke the path (chromadb's Rust
+    # bindings hold global state that we can't reset cleanly in-process).
+    adapter._recover = lambda: None  # type: ignore[method-assign]
+    out = adapter._with_recovery(boom_once_then_ok)
+    assert out == 99
+    assert state["calls"] == 2

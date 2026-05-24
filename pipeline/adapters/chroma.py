@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 import chromadb
 from chromadb.config import Settings
@@ -15,27 +16,79 @@ from ui.backend.schemas import ConnectionTest
 
 logger = logging.getLogger(__name__)
 
+T = TypeVar("T")
+
+# Markers in chromadb error strings that mean "the on-disk schema is gone or
+# unreadable" — recoverable by nuking the path and reconnecting. Anything else
+# we let propagate.
+_RECOVERABLE_MARKERS = (
+    "no such table",
+    "database disk image is malformed",
+    "file is not a database",
+    "DatabaseError",
+    "attempt to write a readonly database",
+    "code: 1032",
+    "unable to open database file",
+)
+
 
 class ChromaAdapter(VectorDBAdapter):
     """Persistent ChromaDB-backed adapter.
 
     We always pass in our own embeddings; ChromaDB's default embedding function
     is disabled so the pipeline owns the embedding model end-to-end.
+
+    The client + collection are connected lazily on first use AND recreated if
+    the on-disk store has been wiped or corrupted between connections — common
+    when the user's session got reset and the prior Python process held an
+    in-memory client against a path that no longer exists.
     """
 
     def __init__(self, path: str | Path, collection: str = "corpus") -> None:
         self._path = Path(path)
         self._path.mkdir(parents=True, exist_ok=True)
         self._collection_name = collection
+        self._client: chromadb.PersistentClient | None = None
+        self._collection: Any = None
+        self._connect()
+
+    def _connect(self) -> None:
+        self._path.mkdir(parents=True, exist_ok=True)
         self._client = chromadb.PersistentClient(
             path=str(self._path),
             settings=Settings(anonymized_telemetry=False, allow_reset=True),
         )
         self._collection = self._client.get_or_create_collection(
-            name=collection,
+            name=self._collection_name,
             embedding_function=None,
             metadata={"hnsw:space": "cosine"},
         )
+
+    def _recover(self) -> None:
+        """Drop the stale client, nuke the on-disk path, re-init from a clean slate."""
+        logger.warning("ChromaDB schema unreadable at %s — recovering", self._path)
+        # Drop the stale client first so it releases the sqlite handle.
+        self._collection = None
+        if self._client is not None:
+            try:
+                self._client.reset()
+            except Exception:
+                pass
+            self._client = None
+        if self._path.exists():
+            shutil.rmtree(self._path, ignore_errors=True)
+        self._connect()
+
+    def _with_recovery(self, op: Callable[[], T]) -> T:
+        try:
+            return op()
+        except Exception as exc:
+            msg = str(exc)
+            if not any(marker in msg for marker in _RECOVERABLE_MARKERS):
+                raise
+            logger.warning("Recovering from chromadb error: %s", exc)
+            self._recover()
+            return op()
 
     def upsert(self, items: list[ChunkRecord]) -> None:
         if not items:
@@ -44,18 +97,22 @@ class ChromaAdapter(VectorDBAdapter):
         embeddings = [it.embedding for it in items]
         documents = [it.text for it in items]
         metadatas = [_flatten_metadata(it.metadata) for it in items]
-        self._collection.upsert(
-            ids=ids,
-            embeddings=embeddings,
-            documents=documents,
-            metadatas=metadatas,
+        self._with_recovery(
+            lambda: self._collection.upsert(
+                ids=ids,
+                embeddings=embeddings,
+                documents=documents,
+                metadatas=metadatas,
+            )
         )
 
     def vector_query(self, embedding: list[float], k: int) -> list[QueryHit]:
-        result = self._collection.query(
-            query_embeddings=[embedding],
-            n_results=max(1, k),
-            include=["documents", "metadatas", "distances"],
+        result = self._with_recovery(
+            lambda: self._collection.query(
+                query_embeddings=[embedding],
+                n_results=max(1, k),
+                include=["documents", "metadatas", "distances"],
+            )
         )
         return _hits_from_chroma_result(result)
 
@@ -68,10 +125,10 @@ class ChromaAdapter(VectorDBAdapter):
     def delete(self, ids: list[str]) -> None:
         if not ids:
             return
-        self._collection.delete(ids=ids)
+        self._with_recovery(lambda: self._collection.delete(ids=ids))
 
     def count(self) -> int:
-        return int(self._collection.count())
+        return int(self._with_recovery(lambda: self._collection.count()))
 
     def health_check(self) -> ConnectionTest:
         t0 = time.perf_counter()
