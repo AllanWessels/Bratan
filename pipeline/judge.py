@@ -31,6 +31,7 @@ from typing import Any, Literal
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
+from pipeline import cache as _cache
 from ui.backend.schemas import BratanConfig, JudgeWeights, Passage, PassageRef, SeedCase
 
 logger = logging.getLogger(__name__)
@@ -132,6 +133,87 @@ def judge(
     mode: JudgeMode,
 ) -> JudgeVerdict:
     return _do_judge(case, generated_answer, retrieved, cfg, mode=mode)
+
+
+# ---------------------------------------------------------------------------
+# Drift check (M3 reliability control)
+# ---------------------------------------------------------------------------
+
+
+def drift_check(cfg: BratanConfig, n_samples: int = 5) -> "DriftBlock":
+    """Re-grade a random sample of historical oracle verdicts and report disagreement.
+
+    Walks `reports/history/`, samples `n_samples` `(case_id, prior_composite)` rows
+    from cases that were graded by the oracle, reconstructs each by re-running
+    `pipeline.query.answer()` and `oracle_judge()`, and counts disagreements
+    where `abs(prior - new) > 0.1`.
+
+    Both ends of the re-evaluation hit the LLM disk cache, so a stable pipeline
+    pays near-zero cost across drift checks. Returns `DriftBlock(0, 0.0)` if
+    `n_samples <= 0` or there's no history to sample from.
+    """
+    # Imported lazily so this module can be imported without pulling the whole graph.
+    import random
+
+    from pipeline.metrics import REPORTS_DIR, DriftBlock
+    from pipeline.query import answer as _pipeline_answer
+    from ui.backend.seed_store import _read_all_cases
+
+    if n_samples <= 0:
+        return DriftBlock()
+
+    history_dir = REPORTS_DIR / "history"
+    if not history_dir.exists():
+        return DriftBlock()
+
+    pool: list[tuple[str, float]] = []  # (case_id, prior_composite)
+    for report_path in sorted(history_dir.glob("run-*.json")):
+        try:
+            payload = json.loads(report_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning("drift_check: skipping unreadable %s: %s", report_path.name, exc)
+            continue
+        for row in payload.get("by_case", []) or []:
+            if row.get("judge_mode") != "oracle":
+                continue
+            cid = row.get("case_id")
+            comp = row.get("composite")
+            if isinstance(cid, str) and isinstance(comp, (int, float)):
+                pool.append((cid, float(comp)))
+
+    if not pool:
+        return DriftBlock()
+
+    rng = random.Random(0xB47A4)
+    sample = rng.sample(pool, k=min(n_samples, len(pool)))
+
+    cases_by_id = {c.id: c for c in _read_all_cases()}
+
+    checked = 0
+    disagreements = 0
+    for case_id, prior_composite in sample:
+        case = cases_by_id.get(case_id)
+        if case is None:
+            logger.info("drift_check: case %s no longer in seed.jsonl — skipping", case_id)
+            continue
+        try:
+            result = _pipeline_answer(cfg, case.question)
+            retrieved = result.get("retrieved") or []
+            new_verdict = oracle_judge(case, result.get("answer"), retrieved, cfg)
+        except Exception as exc:
+            logger.warning("drift_check: re-eval of %s failed: %s", case_id, exc)
+            continue
+
+        if new_verdict.answer_correctness is None or new_verdict.faithfulness is None:
+            # Judge couldn't grade (likely no API key); skip rather than miscount.
+            continue
+
+        checked += 1
+        if abs(new_verdict.composite - prior_composite) > 0.1:
+            disagreements += 1
+
+    rate = (disagreements / checked) if checked > 0 else 0.0
+    return DriftBlock(samples_checked=checked, disagreement_rate=rate)
 
 
 # ---------------------------------------------------------------------------
@@ -316,17 +398,44 @@ def _grade(
 def _select_caller(
     cfg: BratanConfig, mode: JudgeMode
 ) -> tuple[Any | None, str, str | None]:
+    """Return `(caller(prompt) -> (text, tokens_in, tokens_out), model, no_llm_reason)`.
+
+    The returned caller is wrapped through `pipeline.cache.cached_call` when
+    `cfg.cost.cache_ttl_hours > 0` — judge calls at temperature 0 are stable,
+    so memoizing them is safe. The wrapper records hit/miss into
+    `pipeline.cache.CACHE_STATS`; callers read it after the run.
+    """
+    ttl = float(getattr(cfg.cost, "cache_ttl_hours", 0) or 0)
     if mode == "oracle":
         api_key = cfg.models.anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY", "")
         model = cfg.models.oracle_model
         if not api_key:
             return None, model, "no_anthropic_api_key"
-        return (lambda prompt: _call_anthropic(api_key, model, prompt)), model, None
+
+        def caller(prompt: str) -> tuple[str, int, int]:
+            if ttl > 0:
+                text, ti, to, _hit = _cache.cached_call(
+                    _call_anthropic, model, prompt, 0.0, ttl, api_key, model, prompt
+                )
+                return text, ti, to
+            return _call_anthropic(api_key, model, prompt)
+
+        return caller, model, None
+
     base_url = (cfg.models.vllm_base_url or "").rstrip("/")
     model = cfg.models.prejudge_model
     if not base_url:
         return None, model, "no_vllm_base_url"
-    return (lambda prompt: _call_vllm(base_url, model, prompt)), model, None
+
+    def caller(prompt: str) -> tuple[str, int, int]:
+        if ttl > 0:
+            text, ti, to, _hit = _cache.cached_call(
+                _call_vllm, model, prompt, 0.0, ttl, base_url, model, prompt
+            )
+            return text, ti, to
+        return _call_vllm(base_url, model, prompt)
+
+    return caller, model, None
 
 
 def _call_anthropic(api_key: str, model: str, prompt: str) -> tuple[str, int, int]:

@@ -13,6 +13,7 @@ import re
 import time
 from pathlib import Path
 
+from pipeline import cache as _cache
 from pipeline.adapters.base import QueryHit
 from ui.backend.schemas import BratanConfig, CorpusSearchResponse, Passage
 
@@ -42,7 +43,12 @@ def search_corpus(cfg: BratanConfig, query_text: str, k: int = 10) -> CorpusSear
 
 
 def answer(cfg: BratanConfig, question: str, k: int = 5) -> dict:
-    """Retrieve top-k passages and ask the oracle LLM for a grounded answer."""
+    """Retrieve top-k passages and ask the oracle LLM for a grounded answer.
+
+    Routes the generation call through `pipeline.cache.cached_call` when
+    `cfg.cost.cache_ttl_hours > 0` so repeat eval runs over the same case
+    are near-free.
+    """
     t0 = time.perf_counter()
     retrieval = search_corpus(cfg, question, k)
     passages = retrieval.passages
@@ -60,13 +66,25 @@ def answer(cfg: BratanConfig, question: str, k: int = 5) -> dict:
 
     model = cfg.models.oracle_model or _FALLBACK_MODEL
     prompt = _render_prompt(question, passages)
-    answer_text = _call_anthropic(api_key, model, prompt)
+
+    ttl = float(getattr(cfg.cost, "cache_ttl_hours", 0) or 0)
+    if ttl > 0:
+        answer_text, tokens_in, tokens_out, cache_hit = _cache.cached_call(
+            _call_anthropic_normalized, model, prompt, 0.0, ttl, api_key, model, prompt
+        )
+    else:
+        answer_text, tokens_in, tokens_out = _call_anthropic_normalized(api_key, model, prompt)
+        cache_hit = False
+
     latency_ms = (time.perf_counter() - t0) * 1000.0
     return {
         "answer": answer_text,
         "retrieved": passages,
         "latency_ms": latency_ms,
         "model": model,
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+        "cache_hit": cache_hit,
     }
 
 
@@ -122,6 +140,25 @@ def _call_anthropic(api_key: str, model: str, prompt: str) -> str:
         if text:
             parts.append(text)
     return "".join(parts).strip()
+
+
+def _call_anthropic_normalized(
+    api_key: str, model: str, prompt: str
+) -> tuple[str, int, int]:
+    """Route through `_call_anthropic` and normalize the return shape.
+
+    The legacy `_call_anthropic` returns `str` (and many tests patch it as such).
+    Live SDK callers want token usage too; cached_call needs a tuple shape. This
+    helper bridges: if `_call_anthropic` returns a tuple already (e.g. an updated
+    stub), pass it through; otherwise wrap the str with zero usage counts.
+    """
+    raw = _call_anthropic(api_key, model, prompt)
+    if isinstance(raw, tuple):
+        text = str(raw[0])
+        ti = int(raw[1]) if len(raw) > 1 else 0
+        to = int(raw[2]) if len(raw) > 2 else 0
+        return text, ti, to
+    return str(raw), 0, 0
 
 
 def _normalize(s: str) -> str:
