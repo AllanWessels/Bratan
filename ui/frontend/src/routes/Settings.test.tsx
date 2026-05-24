@@ -294,3 +294,49 @@ describe("Settings wrapping parity audit", () => {
     ).toBeCloseTo(0.5, 2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Audit row 11: cross-section persistence
+//
+// Settings remounts the active section's component on every sidebar click —
+// `<ActiveSection config={cfg.data ?? null} />` swaps element types when the
+// `active` id changes, so each section component initializes its local
+// `data` from `config?` on mount. If the user types into a field but
+// navigates away before the autosave debounce fires (or before the config
+// query refetches), the typed-but-unsaved value is dropped silently.
+//
+// This test types into Project, switches to Vector DB, switches back, and
+// asserts the input still shows the typed value. The current design
+// remounts → this test FAILS and reveals a real UX bug.
+//
+// TODO: prod bug — section remount on nav drops in-flight edits. Either
+// (a) lift step state up so the Settings host owns it, (b) keep all
+// sections mounted and hide inactive ones, or (c) confirm the autosave
+// pipeline flushes before unmount (it doesn't today — useAutoSaveStep's
+// debounce is 500ms and there's no flush-on-unmount).
+// ---------------------------------------------------------------------------
+
+describe("Settings cross-section persistence", () => {
+  it("typed value in Project section survives navigation to Vector DB and back", async () => {
+    const user = userEvent.setup();
+    render(withProviders(<Settings />));
+    // Project is the default section — type into project_name.
+    const name = screen.getByLabelText(/project name/i);
+    await user.clear(name);
+    await user.type(name, "changed");
+    expect(name).toHaveValue("changed");
+
+    // Navigate away to Vector DB.
+    await user.click(screen.getByRole("button", { name: /Vector DB/i }));
+    expect(screen.queryByLabelText(/project name/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/collection name/i)).toBeInTheDocument();
+
+    // Navigate back to Project.
+    await user.click(screen.getByRole("button", { name: /^Project$/i }));
+    const nameAfter = screen.getByLabelText(/project name/i);
+    // Expectation: the typed-but-unsaved value persists across the nav.
+    // Today's behavior: Step1ProjectBasics remounts and re-reads from
+    // `config.project.project_name` ("settings-test"), losing "changed".
+    expect(nameAfter).toHaveValue("changed");
+  });
+});

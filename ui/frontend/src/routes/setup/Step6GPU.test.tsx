@@ -249,4 +249,73 @@ describe("Step6GPU VRAM math", () => {
     // probe is mocked as already isSuccess in beforeEach → effect should fire
     expect(saveMutate).toHaveBeenCalledWith({ step: 6, data: {} });
   });
+
+  // ---- Audit row 2: VRAM toggle cascade (one assertion per toggle) ----
+  //
+  // The bug class: Step 3 has three independent `use_local_*` toggles whose
+  // OFF state should remove the corresponding row from the Step 6 VRAM
+  // breakdown AND drop its MB cost out of `vram-total-mb`. The existing
+  // "sums zero when every local toggle is off" test only proves the
+  // all-off shortcut; these three pin each toggle's contribution
+  // independently so a regression in one isn't masked by another.
+
+  it("hides the embedding row + drops 130 MB from total when use_local_embedding=false", () => {
+    render(
+      withProviders(
+        <Step6GPU
+          config={makeConfig({
+            use_local_embedding: false,
+            use_local_reranker: true,
+            use_local_prejudge: true,
+          })}
+        />,
+      ),
+    );
+    expect(screen.queryByTestId("vram-row-embedding")).not.toBeInTheDocument();
+    // 2300 (reranker) + 5000 (Qwen 7B prejudge) = 7300; embedding 130 dropped.
+    const total = screen.getByTestId("vram-total-mb").textContent ?? "";
+    expect(total).toContain("7300 MB");
+    expect(total).not.toContain("7430");
+    expect(total).not.toContain("130");
+  });
+
+  it("hides the reranker row + drops 2300 MB from total when use_local_reranker=false", () => {
+    render(
+      withProviders(
+        <Step6GPU
+          config={makeConfig({
+            use_local_embedding: true,
+            use_local_reranker: false,
+            use_local_prejudge: true,
+          })}
+        />,
+      ),
+    );
+    expect(screen.queryByTestId("vram-row-reranker")).not.toBeInTheDocument();
+    // 130 (embedding) + 5000 (prejudge) = 5130; reranker 2300 dropped.
+    const total = screen.getByTestId("vram-total-mb").textContent ?? "";
+    expect(total).toContain("5130 MB");
+    expect(total).not.toContain("7430");
+    expect(total).not.toContain("2300");
+  });
+
+  it("hides the prejudge row + drops 5000 MB from total when use_local_prejudge=false", () => {
+    render(
+      withProviders(
+        <Step6GPU
+          config={makeConfig({
+            use_local_embedding: true,
+            use_local_reranker: true,
+            use_local_prejudge: false,
+          })}
+        />,
+      ),
+    );
+    expect(screen.queryByTestId("vram-row-prejudge")).not.toBeInTheDocument();
+    // 130 (embedding) + 2300 (reranker) = 2430; prejudge 5000 dropped.
+    const total = screen.getByTestId("vram-total-mb").textContent ?? "";
+    expect(total).toContain("2430 MB");
+    expect(total).not.toContain("7430");
+    expect(total).not.toContain("5000");
+  });
 });
