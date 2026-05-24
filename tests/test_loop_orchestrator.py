@@ -24,7 +24,6 @@ from pipeline.agent_runner import AgentRun
 from pipeline.metrics import CostBlock, IterationReport
 from ui.backend.schemas import BratanConfig
 
-
 # Load scripts/loop.py as a module under a stable name.
 ROOT = Path(__file__).resolve().parents[1]
 _loop_path = ROOT / "scripts" / "loop.py"

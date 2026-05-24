@@ -7,8 +7,14 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ui.backend import config_store
-from ui.backend.config_store import _deep_merge, finish_setup, get_setup_state, load, patch, save_step
+from ui.backend.config_store import (
+    _deep_merge,
+    finish_setup,
+    get_setup_state,
+    load,
+    patch,
+    save_step,
+)
 
 
 @pytest.fixture

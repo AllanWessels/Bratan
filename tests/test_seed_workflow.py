@@ -13,7 +13,6 @@ from pathlib import Path
 
 import pytest
 
-
 pytest.importorskip("ui.backend.app", reason="backend agent has not finished yet")
 pytest.importorskip("pipeline.adapters.chroma", reason="backend agent has not finished yet")
 

@@ -36,9 +36,10 @@ import logging
 import os
 import tempfile
 import threading
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,7 @@ def _cache_root() -> Path:
 
 
 def _hash_key(model: str, prompt: str, temperature: float) -> str:
-    payload = f"{model}|{prompt}|{temperature:.6f}".encode("utf-8")
+    payload = f"{model}|{prompt}|{temperature:.6f}".encode()
     return hashlib.sha256(payload).hexdigest()
 
 
@@ -97,9 +98,8 @@ def _read_entry(path: Path, ttl_hours: float) -> dict[str, Any] | None:
     if stored_at.tzinfo is None:
         stored_at = stored_at.replace(tzinfo=UTC)
 
-    if ttl_hours > 0:
-        if datetime.now(UTC) - stored_at > timedelta(hours=ttl_hours):
-            return None
+    if ttl_hours > 0 and datetime.now(UTC) - stored_at > timedelta(hours=ttl_hours):
+        return None
 
     return payload
 

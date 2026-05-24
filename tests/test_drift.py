@@ -19,7 +19,6 @@ from pipeline import metrics as metrics_mod
 from ui.backend.schemas import (
     BratanConfig,
     FailureCategory,
-    ModelConfig,
     Passage,
     PassageRef,
     SeedCase,

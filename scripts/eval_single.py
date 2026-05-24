@@ -26,7 +26,7 @@ if str(_ROOT) not in sys.path:
 from pipeline import judge as judge_mod  # noqa: E402
 from pipeline import query as pipeline_query  # noqa: E402
 from ui.backend.config_store import load as load_config  # noqa: E402
-from ui.backend.schemas import BratanConfig, Passage, SeedCase  # noqa: E402
+from ui.backend.schemas import Passage, SeedCase  # noqa: E402
 from ui.backend.seed_store import _read_all_cases  # noqa: E402 type: ignore[attr-defined]
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -111,7 +111,9 @@ def _find_case(case_id: str) -> SeedCase | None:
                 except Exception:
                     continue
                 if obj.get("id") == case_id:
-                    from ui.backend.seed_store import _seed_case_from_raw  # type: ignore[attr-defined]
+                    from ui.backend.seed_store import (
+                        _seed_case_from_raw,  # type: ignore[attr-defined]
+                    )
 
                     return _seed_case_from_raw(obj)
     return None

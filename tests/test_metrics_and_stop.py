@@ -8,7 +8,6 @@ import pytest
 
 from pipeline.judge import JudgeVerdict
 from pipeline.metrics import (
-    DriftBlock,
     IterationReport,
     build_report,
     pipeline_manifest_hash,
@@ -17,7 +16,6 @@ from pipeline.stop_criteria import LoopState, evaluate
 from ui.backend.schemas import (
     BratanConfig,
     FailureCategory,
-    JudgeWeights,
     PassageRef,
     SeedCase,
     StopCriteria,

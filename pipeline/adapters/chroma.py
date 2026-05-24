@@ -5,8 +5,9 @@ from __future__ import annotations
 import logging
 import shutil
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
 
 import chromadb
 from chromadb.config import Settings

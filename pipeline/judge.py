@@ -140,7 +140,7 @@ def judge(
 # ---------------------------------------------------------------------------
 
 
-def drift_check(cfg: BratanConfig, n_samples: int = 5) -> "DriftBlock":
+def drift_check(cfg: BratanConfig, n_samples: int = 5) -> "DriftBlock":  # noqa: F821, UP037
     """Re-grade a random sample of historical oracle verdicts and report disagreement.
 
     Walks `reports/history/`, samples `n_samples` `(case_id, prior_composite)` rows

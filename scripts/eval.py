@@ -42,8 +42,11 @@ from pipeline.budget import (  # noqa: E402
     BudgetTracker,
 )
 from ui.backend.config_store import load as load_config  # noqa: E402
-from ui.backend.schemas import BratanConfig, Passage, SeedCase  # noqa: E402
-from ui.backend.seed_store import _read_all_cases, _seed_case_from_raw  # noqa: E402 type: ignore[attr-defined]
+from ui.backend.schemas import Passage, SeedCase  # noqa: E402
+from ui.backend.seed_store import (  # noqa: E402 type: ignore[attr-defined]
+    _read_all_cases,
+    _seed_case_from_raw,
+)
 
 logger = logging.getLogger(__name__)
 DEFAULT_CONFIG = _ROOT / "bratan.config.yaml"
@@ -153,7 +156,7 @@ def main() -> int:
                 "drift_check: %d samples re-graded, disagreement_rate=%.1f%%",
                 drift_block.samples_checked, drift_block.disagreement_rate * 100,
             )
-        except Exception as exc:  # noqa: BLE001 — drift is best-effort
+        except Exception as exc:
             logger.warning("drift_check failed: %s", exc)
 
     previous = metrics.load_latest()
@@ -217,7 +220,7 @@ def _gather_cases(restrict: list[str] | None) -> list[SeedCase]:
 def select_informative_subset(
     cases: list[SeedCase],
     n: int,
-    latest_report: "metrics.IterationReport | None",
+    latest_report: metrics.IterationReport | None,
 ) -> list[SeedCase]:
     """Pick the K most-informative cases for an inner-loop iteration.
 

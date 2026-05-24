@@ -9,9 +9,8 @@ Goals:
 from __future__ import annotations
 
 import hashlib
-import os
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 import pytest
 
@@ -62,7 +61,9 @@ def tmp_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Pat
 def stub_embedder(monkeypatch: pytest.MonkeyPatch) -> StubEmbedder:
     """Replace `get_embedder` everywhere it's bound — module-top imports cache the name."""
     embedder = StubEmbedder()
-    factory = lambda *_a, **_kw: embedder
+
+    def factory(*_a, **_kw):
+        return embedder
 
     from pipeline import embeddings, ingest
 

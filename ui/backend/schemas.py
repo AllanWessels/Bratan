@@ -13,13 +13,12 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-
 # ---------------------------------------------------------------------------
 # Failure categories (must mirror test_cases/schema.md)
 # ---------------------------------------------------------------------------
 
 
-class FailureCategory(str, Enum):
+class FailureCategory(str, Enum):  # noqa: UP042  # keep str+Enum for Pydantic compat
     """Failure categories — kept aligned with test_cases/schema.md (the human anchor)."""
 
     PARAPHRASE_BRITTLENESS = "paraphrase_brittleness"
@@ -37,7 +36,7 @@ class FailureCategory(str, Enum):
 # ---------------------------------------------------------------------------
 
 
-class VectorDBAdapter(str, Enum):
+class VectorDBAdapter(str, Enum):  # noqa: UP042  # keep str+Enum for Pydantic compat
     CHROMA = "chroma"
     QDRANT = "qdrant"
     PINECONE = "pinecone"

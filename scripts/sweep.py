@@ -176,7 +176,7 @@ def _run_trial(candidate: Candidate, *, subset: int | None, judge: str) -> Trial
 def _grid_candidates(grids: dict[str, list[Any]]) -> list[Candidate]:
     keys = list(grids.keys())
     rows = list(itertools.product(*(grids[k] for k in keys)))
-    return [Candidate(dict(zip(keys, row))) for row in rows]
+    return [Candidate(dict(zip(keys, row, strict=True))) for row in rows]
 
 
 def _ablation_candidates(stages: list[str], incumbent: dict[str, Any]) -> list[Candidate]:
@@ -206,14 +206,14 @@ def _bayesian_search(
 ) -> list[TrialResult]:
     try:
         import optuna  # type: ignore[import-not-found]
-    except ImportError:
+    except ImportError as exc:
         raise SystemExit(
             "Bayesian strategy requires optuna. Install with: uv add optuna"
-        )
+        ) from exc
 
     results: list[TrialResult] = []
 
-    def objective(trial: "optuna.Trial") -> float:
+    def objective(trial: optuna.Trial) -> float:
         if cast == "int":
             v: Any = trial.suggest_int(param, int(low), int(high))
         elif cast == "logfloat":
@@ -324,7 +324,7 @@ def main() -> int:
     args = p.parse_args()
     random.seed(args.seed)
 
-    cfg = load_config(DEFAULT_CONFIG)
+    _ = load_config(DEFAULT_CONFIG)  # validates the user-owned config is loadable
     incumbent = _load_pipeline_yaml()
 
     # Build candidates per strategy.
