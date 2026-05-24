@@ -35,6 +35,7 @@ const mocks = vi.hoisted(() => ({
   useVLLMStatus: vi.fn(),
   useStartVLLM: vi.fn(),
   useStopVLLM: vi.fn(),
+  useResetVectorStore: vi.fn(),
 }));
 
 vi.mock("@/api/hooks", () => mocks);
@@ -239,6 +240,15 @@ beforeEach(() => {
   });
   mocks.useStopVLLM.mockReturnValue({
     mutate: vi.fn(),
+    isPending: false,
+    isError: false,
+    error: null,
+  });
+  mocks.useResetVectorStore.mockReturnValue({
+    mutate: vi.fn(),
+    mutateAsync: vi.fn(),
+    reset: vi.fn(),
+    data: null,
     isPending: false,
     isError: false,
     error: null,
