@@ -180,10 +180,11 @@ describe("Run", () => {
 
   it("renders per-category bars sorted worst first", () => {
     render(withProviders(<Run />));
-    // multi_hop (0.40) should appear before straightforward (0.90)
+    // multi_hop (0.40) should appear before straightforward (0.90).
+    // Labels now use the SME-friendly strings from FAILURE_CATEGORY_LABELS.
     const html = document.body.innerHTML;
-    const multiIdx = html.indexOf("Multi Hop");
-    const straightIdx = html.indexOf("Straightforward");
+    const multiIdx = html.indexOf("Needs multiple passages");
+    const straightIdx = html.indexOf("Direct question");
     expect(multiIdx).toBeGreaterThanOrEqual(0);
     expect(straightIdx).toBeGreaterThan(multiIdx);
   });

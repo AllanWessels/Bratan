@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Eye, EyeOff } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Eye, EyeOff, Copy, Check, Play, Square, ExternalLink } from "lucide-react";
 import { Card } from "@/components/Card";
 import { Field, TextInput } from "@/components/Field";
 import { Button } from "@/components/Button";
@@ -9,8 +9,15 @@ import {
   explainVLLMError,
   type ConnectionState,
 } from "@/components/ConnectionBadge";
-import { useTestAnthropic, useTestVLLM } from "@/api/hooks";
-import type { BratanConfig, ModelConfig } from "@/api/types";
+import {
+  useStartVLLM,
+  useStopVLLM,
+  useTestAnthropic,
+  useTestVLLM,
+  useVLLMStatus,
+} from "@/api/hooks";
+import type { BratanConfig, ModelConfig, VLLMState } from "@/api/types";
+import { useUIStore } from "@/store/uiStore";
 import { cn } from "@/lib/cn";
 import { useAutoSaveStep } from "./useAutoSaveStep";
 
@@ -71,12 +78,37 @@ export function Step3Models({ config }: Props) {
   const [showKey, setShowKey] = useState(false);
   const anthropicTest = useTestAnthropic();
   const vllmTest = useTestVLLM();
+  // Managed-vLLM lifecycle. Only poll while the pre-judge is ON — there's no
+  // reason to keep hitting /api/system/vllm/status if the feature is disabled.
+  const vllmStatus = useVLLMStatus(data.use_local_prejudge ? 2000 : false);
+  const startVLLM = useStartVLLM();
+  const stopVLLM = useStopVLLM();
+  const pushToast = useUIStore((s) => s.pushToast);
+  // Track last-seen managed state so we can fire-once on transitions to "ready".
+  const lastSeenStateRef = useRef<VLLMState | null>(null);
 
   useEffect(() => {
     if (config?.models) setData(config.models);
   }, [config]);
 
   useAutoSaveStep(3, data);
+
+  // Auto-fire the Test mutation + flash a success toast when the managed
+  // vLLM transitions to "ready". One-shot per transition.
+  const currentManagedState = vllmStatus.data?.state ?? null;
+  useEffect(() => {
+    if (currentManagedState === "ready" && lastSeenStateRef.current !== "ready") {
+      pushToast("vLLM is up — running the Test now.", "success");
+      vllmTest.mutate({
+        base_url: data.vllm_base_url,
+        model: data.prejudge_model,
+      });
+    }
+    lastSeenStateRef.current = currentManagedState;
+    // We intentionally don't depend on `vllmTest` / `data` so we fire exactly
+    // once per transition. Reading the latest URL/model from the closure is fine.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentManagedState]);
 
   const anthropicBadge: ConnectionState = anthropicTest.isPending
     ? "testing"
@@ -307,6 +339,262 @@ export function Step3Models({ config }: Props) {
           </div>
         </div>
       </Card>
+
+      {data.use_local_prejudge && (
+        <GetVLLMRunningCard
+          model={data.prejudge_model}
+          baseUrl={data.vllm_base_url}
+          state={vllmStatus.data?.state ?? "stopped"}
+          managedModel={vllmStatus.data?.model ?? null}
+          managedPort={vllmStatus.data?.port ?? null}
+          elapsedS={vllmStatus.data?.elapsed_s ?? 0}
+          message={vllmStatus.data?.message ?? null}
+          starting={startVLLM.isPending}
+          onStart={() =>
+            startVLLM.mutate({
+              model: data.prejudge_model,
+              port: parsePortFromUrl(data.vllm_base_url),
+            })
+          }
+          onStop={() => stopVLLM.mutate()}
+          startError={startVLLM.error}
+        />
+      )}
+    </div>
+  );
+}
+
+function parsePortFromUrl(url: string): number {
+  try {
+    const u = new URL(url);
+    if (u.port) return Number(u.port);
+  } catch {
+    /* fall through */
+  }
+  return 8001;
+}
+
+interface GetVLLMRunningCardProps {
+  model: string;
+  baseUrl: string;
+  state: VLLMState;
+  managedModel: string | null;
+  managedPort: number | null;
+  elapsedS: number;
+  message: string | null;
+  starting: boolean;
+  onStart: () => void;
+  onStop: () => void;
+  startError: Error | null;
+}
+
+function GetVLLMRunningCard({
+  model,
+  baseUrl,
+  state,
+  managedModel,
+  managedPort,
+  elapsedS,
+  message,
+  starting,
+  onStart,
+  onStop,
+  startError,
+}: GetVLLMRunningCardProps) {
+  const command = `vllm serve ${model} --port ${parsePortFromUrl(baseUrl)}`;
+  const isRunning = state === "starting" || state === "downloading" || state === "ready";
+
+  // Detect the "not installed" error specifically; backend returns
+  // BackendError with detail.error === "vllm_not_installed".
+  const notInstalled =
+    !!startError &&
+    "detail" in startError &&
+    typeof (startError as { detail?: unknown }).detail === "object" &&
+    (startError as { detail?: { detail?: { error?: string } } }).detail?.detail?.error ===
+      "vllm_not_installed";
+
+  return (
+    <Card
+      title="Get vLLM running"
+      description={
+        <>
+          The Test above checks if a vLLM server is reachable. If you don't have
+          one running yet, pick one of the two paths below — Bratan can either
+          start it for you, or hand you the exact command to run it yourself.
+        </>
+      }
+    >
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2" data-testid="get-vllm-running">
+        {/* Auto-start panel */}
+        <div
+          className="flex flex-col gap-3 rounded-xl border border-emerald-200 bg-emerald-50/40 p-4"
+          data-testid="vllm-autostart-panel"
+        >
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-slate-800">
+              Auto-start (recommended)
+            </h3>
+            <VLLMStateBadge state={state} />
+          </div>
+          <p className="text-xs text-slate-600">
+            Bratan spawns <code>vllm serve</code> as a managed background
+            process. First run downloads ~5 GB of weights — keep this tab open.
+          </p>
+
+          <div className="flex items-center gap-2">
+            {!isRunning ? (
+              <Button
+                variant="primary"
+                onClick={onStart}
+                loading={starting}
+                data-testid="vllm-start-button"
+              >
+                <Play className="h-4 w-4" />
+                Start vLLM server
+              </Button>
+            ) : (
+              <Button
+                variant="secondary"
+                onClick={onStop}
+                data-testid="vllm-stop-button"
+              >
+                <Square className="h-4 w-4" />
+                Stop vLLM
+              </Button>
+            )}
+            {state === "ready" && (
+              <span className="text-xs text-emerald-700" data-testid="vllm-ready-hint">
+                Ready on {managedModel ?? model}:{managedPort ?? "?"} — the Test
+                above just flashed green.
+              </span>
+            )}
+          </div>
+
+          {(state === "starting" || state === "downloading") && (
+            <div
+              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600"
+              data-testid="vllm-progress"
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-medium text-slate-700">
+                  {state === "downloading"
+                    ? "Downloading model weights…"
+                    : "Starting vLLM server…"}
+                </span>
+                <span className="tabular-nums text-slate-500">
+                  {Math.floor(elapsedS)}s
+                </span>
+              </div>
+              {message && <p className="mt-1 text-slate-500">{message}</p>}
+            </div>
+          )}
+
+          {state === "failed" && (
+            <p
+              className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700"
+              data-testid="vllm-failed-message"
+            >
+              {message ?? "vLLM failed to start. Check the server logs."}
+            </p>
+          )}
+
+          {notInstalled && (
+            <p
+              className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"
+              data-testid="vllm-not-installed-message"
+            >
+              vLLM isn't installed in this environment. Run{" "}
+              <code className="rounded bg-amber-100 px-1">uv sync --extra gpu</code>{" "}
+              in a terminal, then click Start again. Heads-up: this pulls a
+              CUDA-enabled torch (~2 GB) and needs a recent NVIDIA driver.
+            </p>
+          )}
+        </div>
+
+        {/* Manual panel */}
+        <div
+          className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4"
+          data-testid="vllm-manual-panel"
+        >
+          <h3 className="text-sm font-semibold text-slate-800">
+            Show me the command
+          </h3>
+          <p className="text-xs text-slate-600">
+            Prefer to run it yourself in another terminal? Copy this. First run
+            downloads ~5 GB of weights and needs GPU memory.
+          </p>
+          <CopyCommand command={command} />
+          <a
+            href="https://docs.vllm.ai/en/latest/serving/openai_compatible_server.html"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-xs text-brand-700 hover:underline"
+          >
+            <ExternalLink className="h-3 w-3" />
+            vLLM serve docs
+          </a>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function VLLMStateBadge({ state }: { state: VLLMState }) {
+  const styles: Record<VLLMState, { dot: string; text: string; label: string }> = {
+    stopped: { dot: "bg-slate-400", text: "text-slate-600", label: "stopped" },
+    starting: { dot: "bg-amber-500 animate-pulse", text: "text-amber-700", label: "starting" },
+    downloading: {
+      dot: "bg-amber-500 animate-pulse",
+      text: "text-amber-700",
+      label: "downloading",
+    },
+    ready: { dot: "bg-emerald-500", text: "text-emerald-700", label: "ready" },
+    failed: { dot: "bg-red-500", text: "text-red-700", label: "failed" },
+  };
+  const s = styles[state];
+  return (
+    <span
+      className={cn("inline-flex items-center gap-1.5 text-xs font-medium", s.text)}
+      data-testid="vllm-state-badge"
+      data-state={state}
+    >
+      <span className={cn("h-2 w-2 rounded-full", s.dot)} />
+      {s.label}
+    </span>
+  );
+}
+
+function CopyCommand({ command }: { command: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const onCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(command);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard blocked — user can still select manually. */
+    }
+  };
+
+  return (
+    <div className="flex items-stretch gap-2">
+      <code
+        className="flex-1 overflow-x-auto rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800"
+        data-testid="vllm-manual-command"
+      >
+        {command}
+      </code>
+      <button
+        type="button"
+        onClick={onCopy}
+        aria-label="Copy command"
+        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700 hover:bg-slate-100"
+        data-testid="vllm-copy-button"
+      >
+        {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+        {copied ? "Copied" : "Copy"}
+      </button>
     </div>
   );
 }

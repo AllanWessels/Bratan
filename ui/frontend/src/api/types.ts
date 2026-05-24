@@ -16,6 +16,53 @@ export const FAILURE_CATEGORIES = [
 ] as const;
 export type FailureCategory = (typeof FAILURE_CATEGORIES)[number];
 
+/**
+ * Plain-language labels + descriptions for each failure category.
+ *
+ * The enum values in `test_cases/schema.md` are the wire-level contract and
+ * stay as-is (RAG jargon is fine in the JSON). These labels are what the
+ * subject-matter expert actually sees in the authoring UI — they need to
+ * make sense to someone who knows the *content* of the corpus, not the
+ * mechanics of retrieval.
+ */
+export const FAILURE_CATEGORY_LABELS: Record<
+  FailureCategory,
+  { label: string; description: string }
+> = {
+  straightforward: {
+    label: "Direct question",
+    description: "A regular question with a clear answer in the corpus.",
+  },
+  paraphrase_brittleness: {
+    label: "Different words, same idea",
+    description: "The corpus uses different terminology than the question.",
+  },
+  multi_hop: {
+    label: "Needs multiple passages",
+    description: "The answer combines information from 2+ places.",
+  },
+  structured_content: {
+    label: "Tables, lists, or code",
+    description: "The answer lives inside a table, list, or code block.",
+  },
+  temporal_reasoning: {
+    label: "Time-sensitive question",
+    description: "The answer depends on 'recent', 'last quarter', 'before X'.",
+  },
+  negation_or_scope: {
+    label: "What it isn't",
+    description: "Asks what doesn't apply, or scopes the answer with 'except X'.",
+  },
+  disambiguation: {
+    label: "Picking the right one",
+    description: "Multiple similar things in the corpus; the right one must be chosen.",
+  },
+  out_of_scope: {
+    label: "Not in the corpus",
+    description: "Answer isn't here — the pipeline should refuse, not invent.",
+  },
+};
+
 // Vector DB adapter enum
 export const VECTOR_DB_ADAPTERS = [
   "chroma",
@@ -182,6 +229,14 @@ export interface CorpusSearchResponse {
   passages: Passage[];
   embedding_model: string;
   latency_ms: number;
+}
+
+export interface CorpusPassagesResponse {
+  passages: Passage[];
+  total: number;
+  offset: number;
+  limit: number;
+  window_lines: number;
 }
 
 export interface IngestStatus {
@@ -386,4 +441,29 @@ export interface LoopStreamEvent {
   type: LoopStreamEventType;
   report: IterationReport | null;
   timestamp: string;
+}
+
+// ---------------------------------------------------------------------------
+// vLLM lifecycle (managed local server for the pre-judge)
+// ---------------------------------------------------------------------------
+
+export type VLLMState = "stopped" | "starting" | "downloading" | "ready" | "failed";
+
+export interface VLLMStatus {
+  state: VLLMState;
+  model: string | null;
+  port: number | null;
+  base_url: string | null;
+  elapsed_s: number;
+  message: string | null;
+}
+
+export interface VLLMStartRequest {
+  model: string;
+  port: number;
+}
+
+export interface VLLMStopResponse {
+  ok: boolean;
+  was_running: boolean;
 }

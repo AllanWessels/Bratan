@@ -222,4 +222,133 @@ describe("Step3Models", () => {
     // Now the explanatory callout should appear.
     expect(screen.getByText(/You don't need vLLM right now/i)).toBeInTheDocument();
   });
+
+  // ---- "Get vLLM running" sub-card (auto-start + manual copy) ----
+
+  it("auto-start sub-card renders only when Local pre-judge is ON", async () => {
+    const user = userEvent.setup();
+    render(withProviders(<Step3Models config={null} />));
+    // Default: prejudge ON -> sub-card visible.
+    expect(screen.getByTestId("get-vllm-running")).toBeInTheDocument();
+    expect(screen.getByTestId("vllm-autostart-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("vllm-manual-panel")).toBeInTheDocument();
+
+    // Toggle prejudge OFF -> sub-card disappears entirely.
+    const prejudgeToggle = screen.getByLabelText(/Local pre-judge/i);
+    await user.click(prejudgeToggle);
+    expect(screen.queryByTestId("get-vllm-running")).not.toBeInTheDocument();
+  });
+
+  it("clicking 'Start vLLM server' POSTs to /api/system/vllm/start with model + port", async () => {
+    responses["/api/system/vllm/status"] = {
+      ok: true,
+      // Stubbed status payload — VLLMStatus shape, but the mockFetch returns
+      // whatever JSON we set, so we shape it like the real API.
+      error: null,
+      latency_ms: null,
+      detail: null,
+    } as unknown as TestResponse;
+    // Note: the start mock just needs to return any JSON; the component reads
+    // /api/system/vllm/status separately for state.
+    const user = userEvent.setup();
+    render(withProviders(<Step3Models config={null} />));
+    const startBtn = screen.getByTestId("vllm-start-button");
+    await user.click(startBtn);
+    await waitFor(() => {
+      const calls = captured.filter((c) => c.url.includes("/api/system/vllm/start"));
+      expect(calls.length).toBeGreaterThanOrEqual(1);
+    });
+    const call = captured.find((c) => c.url.includes("/api/system/vllm/start"))!;
+    const body = call.body as { model: string; port: number };
+    expect(body.model).toBe("Qwen/Qwen2.5-7B-Instruct-AWQ");
+    expect(body.port).toBe(8001);
+  });
+
+  it("ready state turns the existing vLLM Test green automatically", async () => {
+    // The status poll yields `state: "ready"` — the component should fire the
+    // existing useTestVLLM mutation, which then receives `{ok: true}`.
+    responses["/api/system/vllm/status"] = {
+      state: "ready",
+      model: "Qwen/Qwen2.5-7B-Instruct-AWQ",
+      port: 8001,
+      base_url: "http://localhost:8001",
+      elapsed_s: 4.2,
+      message: "vLLM is ready.",
+    } as unknown as TestResponse;
+    responses["/api/setup/test-vllm"] = {
+      ok: true,
+      error: null,
+      latency_ms: 12,
+      detail: { data: [] },
+    };
+    render(withProviders(<Step3Models config={null} />));
+    // Wait for the polling status to land + the auto-fire to call test-vllm.
+    await waitFor(
+      () => {
+        const calls = captured.filter((c) => c.url.includes("/api/setup/test-vllm"));
+        expect(calls.length).toBeGreaterThanOrEqual(1);
+      },
+      { timeout: 4000 },
+    );
+    // The Connection badge under "vllm-result" should resolve to OK.
+    await waitFor(() => {
+      const result = screen.getByTestId("vllm-result");
+      // The OK ConnectionBadge has the word "OK" or a green dot — we look
+      // for the absence of an error message and presence of latency display.
+      expect(result.textContent ?? "").toMatch(/12|ms|ok/i);
+    });
+  });
+
+  it("manual panel shows a copy-paste command matching the selected prejudge_model", () => {
+    render(withProviders(<Step3Models config={null} />));
+    const cmd = screen.getByTestId("vllm-manual-command");
+    expect(cmd.textContent).toMatch(/vllm serve Qwen\/Qwen2\.5-7B-Instruct-AWQ --port 8001/);
+  });
+
+  it("renders the 'not installed' hint when the start endpoint returns vllm_not_installed", async () => {
+    // Override fetch for this one test to send a 422 for /vllm/start.
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async (url, init) => {
+      const u = String(url);
+      let body: Record<string, unknown> | null = null;
+      if (init?.body) {
+        try {
+          body = JSON.parse(init.body as string);
+        } catch {
+          body = null;
+        }
+      }
+      captured.push({ url: u, body });
+      if (u.includes("/api/system/vllm/start")) {
+        return new Response(
+          JSON.stringify({
+            detail: {
+              error: "vllm_not_installed",
+              message:
+                "The `vllm` CLI is not installed. Run `uv sync --extra gpu` to install the GPU extras, then try again.",
+              hint: "uv sync --extra gpu",
+            },
+          }),
+          { status: 422, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return new Response(JSON.stringify({ ok: true, config: {} }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    try {
+      const user = userEvent.setup();
+      render(withProviders(<Step3Models config={null} />));
+      await user.click(screen.getByTestId("vllm-start-button"));
+      await waitFor(() => {
+        expect(screen.getByTestId("vllm-not-installed-message")).toBeInTheDocument();
+      });
+      const msg = screen.getByTestId("vllm-not-installed-message");
+      expect(msg.textContent).toMatch(/uv sync --extra gpu/);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
 });
