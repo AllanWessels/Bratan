@@ -15,6 +15,7 @@ from pipeline.ingest import (
     _load_html,
     _load_text,
     list_corpus,
+    list_passages_paginated,
     read_passage,
 )
 
@@ -147,6 +148,67 @@ def test_read_passage_rejects_path_traversal(tmp_path: Path) -> None:
             read_passage(tmp_path, "../secret.md", 1, 1)
     finally:
         (tmp_path.parent / "secret.md").unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# list_passages_paginated — SME "browse the corpus" view
+# ---------------------------------------------------------------------------
+
+
+def _write_n_lines(path: Path, n: int) -> None:
+    path.write_text("\n".join(f"line {i}" for i in range(1, n + 1)))
+
+
+def test_list_passages_paginated_returns_fixed_line_windows(tmp_path: Path) -> None:
+    _write_n_lines(tmp_path / "a.md", 25)
+    passages, total = list_passages_paginated(tmp_path, "a.md", offset=0, limit=10)
+    # 25 lines / 10-line windows => 3 windows total
+    assert total == 3
+    assert len(passages) == 3
+    # First window is lines 1-10, second 11-20, third 21-25 (clamped to EOF)
+    assert passages[0]["line_start"] == 1 and passages[0]["line_end"] == 10
+    assert passages[1]["line_start"] == 11 and passages[1]["line_end"] == 20
+    assert passages[2]["line_start"] == 21 and passages[2]["line_end"] == 25
+    # Each passage carries its source file path + a content string.
+    assert all(p["path"] == "a.md" for p in passages)
+    assert "line 1" in passages[0]["content"]
+
+
+def test_list_passages_paginated_respects_offset(tmp_path: Path) -> None:
+    _write_n_lines(tmp_path / "a.md", 50)
+    passages, total = list_passages_paginated(tmp_path, "a.md", offset=2, limit=2)
+    assert total == 5
+    assert len(passages) == 2
+    assert passages[0]["line_start"] == 21
+    assert passages[1]["line_start"] == 31
+
+
+def test_list_passages_paginated_clamps_limit_to_50(tmp_path: Path) -> None:
+    _write_n_lines(tmp_path / "a.md", 1000)
+    passages, _total = list_passages_paginated(tmp_path, "a.md", offset=0, limit=500)
+    assert len(passages) <= 50
+
+
+def test_list_passages_paginated_rejects_path_traversal(tmp_path: Path) -> None:
+    _write_n_lines(tmp_path / "a.md", 5)
+    (tmp_path.parent / "secret.md").write_text("outside")
+    try:
+        with pytest.raises((PermissionError, FileNotFoundError)):
+            list_passages_paginated(tmp_path, "../secret.md", offset=0, limit=10)
+    finally:
+        (tmp_path.parent / "secret.md").unlink(missing_ok=True)
+
+
+def test_list_passages_paginated_missing_file_raises(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError):
+        list_passages_paginated(tmp_path, "nope.md", offset=0, limit=10)
+
+
+def test_list_passages_paginated_handles_empty_file(tmp_path: Path) -> None:
+    (tmp_path / "empty.md").write_text("")
+    passages, total = list_passages_paginated(tmp_path, "empty.md", offset=0, limit=10)
+    assert passages == []
+    assert total == 0
 
 
 # ---------------------------------------------------------------------------

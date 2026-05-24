@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   useConfig: vi.fn(),
   useSeedList: vi.fn(),
   useCorpusFiles: vi.fn(),
+  useCorpusPassagesPaginated: vi.fn(),
   useIngestStatus: vi.fn(),
   useStartIngest: vi.fn(),
   useSeedDrafts: vi.fn(),
@@ -89,6 +90,12 @@ beforeEach(() => {
   mocks.useConfig.mockReturnValue({ data: sampleConfig, isLoading: false });
   mocks.useSeedList.mockReturnValue({ data: makeSeedList(5), isLoading: false });
   mocks.useCorpusFiles.mockReturnValue({ data: [], isLoading: false, isError: false });
+  mocks.useCorpusPassagesPaginated.mockReturnValue({
+    data: null,
+    isLoading: false,
+    isError: false,
+    error: null,
+  });
   mocks.useIngestStatus.mockReturnValue({
     data: {
       state: "idle",
@@ -168,5 +175,19 @@ describe("Authoring", () => {
     render(withProviders(<Authoring />));
     expect(screen.getByRole("link", { name: /run/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /settings/i })).toBeInTheDocument();
+  });
+
+  it("offers both authoring-mode tabs", () => {
+    render(withProviders(<Authoring />));
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs).toHaveLength(2);
+    expect(screen.getByRole("tab", { name: /from the corpus/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /from a question/i })).toBeInTheDocument();
+  });
+
+  it("defaults to the 'From the corpus' mode for SMEs", () => {
+    render(withProviders(<Authoring />));
+    const fromCorpus = screen.getByRole("tab", { name: /from the corpus/i });
+    expect(fromCorpus).toHaveAttribute("aria-selected", "true");
   });
 });
