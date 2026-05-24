@@ -286,3 +286,42 @@ class SeedListResponse(BaseModel):
     cases: list[SeedCase]
     target_n: int
     progress: float  # cases / target_n, clamped to 1.0
+
+
+# ---------------------------------------------------------------------------
+# M2 — Loop control + report read endpoints
+# ---------------------------------------------------------------------------
+
+
+class LoopStartRequest(BaseModel):
+    iterations: int = Field(1, ge=0, le=1000)
+    budget_usd: float | None = Field(None, ge=0.0)
+    skip_red: bool = False
+    no_agents: bool = False
+
+
+class LoopStartResponse(BaseModel):
+    task_id: str
+    started_at: str
+
+
+class LoopStopResponse(BaseModel):
+    ok: bool
+    was_running: bool
+
+
+class LoopStatus(BaseModel):
+    running: bool
+    task_id: str | None = None
+    current_iteration: int | None = None
+    started_at: str | None = None
+    iterations_requested: int = 0
+    last_report_ts: str | None = None
+
+
+class ReportSummary(BaseModel):
+    timestamp: str
+    iteration: int
+    composite_mean: float
+    pass_rate_at_0_6: float
+    stop_reason: str | None = None

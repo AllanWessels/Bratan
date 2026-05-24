@@ -6,15 +6,19 @@ that the backend agent fills in. The signatures are the wire contract.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import json
 import logging
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from ui.backend import config_store, seed_store, system_probe
+from ui.backend import config_store, loop_control, seed_store, system_probe
 from ui.backend.schemas import (
     BratanConfig,
     ConnectionTest,
@@ -22,7 +26,12 @@ from ui.backend.schemas import (
     CorpusSearchRequest,
     CorpusSearchResponse,
     IngestStatus,
+    LoopStartRequest,
+    LoopStartResponse,
+    LoopStatus,
+    LoopStopResponse,
     ProbeResult,
+    ReportSummary,
     SaveStepRequest,
     SaveStepResponse,
     SeedListResponse,
@@ -204,6 +213,177 @@ def seed_save_draft(draft_id: str, draft: dict) -> dict:
 def seed_delete_draft(draft_id: str) -> JSONResponse:
     seed_store.delete_draft(PROJECT_ROOT, draft_id)
     return JSONResponse({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# Reports (M2 dashboard read-side)
+# ---------------------------------------------------------------------------
+
+
+REPORTS_DIR = PROJECT_ROOT / "reports"
+
+
+def _list_history_files() -> list[Path]:
+    history = REPORTS_DIR / "history"
+    if not history.exists():
+        return []
+    return sorted(history.glob("run-*.json"))
+
+
+def _load_report_file(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+@app.get("/api/reports/latest")
+def reports_latest() -> dict:
+    latest = REPORTS_DIR / "latest.json"
+    if not latest.exists():
+        raise HTTPException(status_code=404, detail="no_reports_yet")
+    return _load_report_file(latest)
+
+
+@app.get("/api/reports/history", response_model=list[ReportSummary])
+def reports_history() -> list[ReportSummary]:
+    summaries: list[ReportSummary] = []
+    for path in _list_history_files():
+        try:
+            payload = _load_report_file(path)
+        except Exception as exc:  # corrupt file — skip but log
+            logger.warning("could not load history file %s: %s", path.name, exc)
+            continue
+        summaries.append(
+            ReportSummary(
+                timestamp=payload.get("timestamp", ""),
+                iteration=int(payload.get("iteration", 0)),
+                composite_mean=float(payload.get("composite_mean", 0.0)),
+                pass_rate_at_0_6=float(payload.get("pass_rate_at_0_6", 0.0)),
+                stop_reason=payload.get("stop_reason"),
+            )
+        )
+    # Newest first.
+    summaries.sort(key=lambda s: s.timestamp, reverse=True)
+    return summaries
+
+
+@app.get("/api/reports/{timestamp}")
+def reports_by_timestamp(timestamp: str) -> dict:
+    # The stored filename normalizes ":" and "." in the ISO timestamp. Accept either form.
+    candidates = {
+        timestamp,
+        timestamp.replace(":", "-").replace(".", "-"),
+    }
+    for path in _list_history_files():
+        try:
+            payload = _load_report_file(path)
+        except Exception:
+            continue
+        if payload.get("timestamp") in candidates or path.stem.removeprefix("run-") in candidates:
+            return payload
+    raise HTTPException(status_code=404, detail="report_not_found")
+
+
+# ---------------------------------------------------------------------------
+# Loop control (M2)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/loop/start", response_model=LoopStartResponse)
+def loop_start(req: LoopStartRequest) -> LoopStartResponse:
+    try:
+        resp = loop_control.start(
+            PROJECT_ROOT,
+            iterations=req.iterations,
+            budget_usd=req.budget_usd,
+            skip_red=req.skip_red,
+            no_agents=req.no_agents,
+        )
+    except RuntimeError as exc:
+        if str(exc) == "loop_already_running":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"error": "loop_already_running"},
+            ) from exc
+        raise
+    return LoopStartResponse(**resp)
+
+
+@app.post("/api/loop/stop", response_model=LoopStopResponse)
+def loop_stop() -> LoopStopResponse:
+    return LoopStopResponse(**loop_control.stop())
+
+
+@app.get("/api/loop/status", response_model=LoopStatus)
+def loop_status() -> LoopStatus:
+    return LoopStatus(**loop_control.status(PROJECT_ROOT))
+
+
+@app.websocket("/api/loop/stream")
+async def loop_stream(ws: WebSocket) -> None:
+    """Broadcast per-iteration events by polling /reports/latest.json mtime.
+
+    Push a starter "iteration_complete" event with the current latest report (if any),
+    then whenever the mtime changes (a new iteration finished writing) push the new
+    payload. If the loop process exits without a new report, push "loop_stopped".
+    """
+    await ws.accept()
+
+    last_mtime = loop_control.latest_report_mtime(PROJECT_ROOT)
+    # Send an initial snapshot so the client doesn't have to round-trip the REST endpoint.
+    initial = loop_control.read_latest_report(PROJECT_ROOT)
+    if initial is not None:
+        await ws.send_text(
+            json.dumps(
+                {
+                    "type": "iteration_complete",
+                    "report": initial,
+                    "timestamp": datetime.now(UTC).isoformat(),
+                }
+            )
+        )
+
+    was_running = loop_control.is_running()
+    try:
+        while True:
+            await asyncio.sleep(0.5)
+            mtime = loop_control.latest_report_mtime(PROJECT_ROOT)
+            if mtime is not None and mtime != last_mtime:
+                last_mtime = mtime
+                payload = loop_control.read_latest_report(PROJECT_ROOT)
+                await ws.send_text(
+                    json.dumps(
+                        {
+                            "type": "iteration_complete",
+                            "report": payload,
+                            "timestamp": datetime.now(UTC).isoformat(),
+                        }
+                    )
+                )
+            running = loop_control.is_running()
+            if was_running and not running:
+                await ws.send_text(
+                    json.dumps(
+                        {
+                            "type": "loop_stopped",
+                            "report": None,
+                            "timestamp": datetime.now(UTC).isoformat(),
+                        }
+                    )
+                )
+            was_running = running
+    except WebSocketDisconnect:
+        return
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning("loop_stream error: %s", exc)
+        with contextlib.suppress(Exception):
+            await ws.send_text(
+                json.dumps(
+                    {
+                        "type": "error",
+                        "report": None,
+                        "timestamp": datetime.now(UTC).isoformat(),
+                    }
+                )
+            )
 
 
 # ---------------------------------------------------------------------------

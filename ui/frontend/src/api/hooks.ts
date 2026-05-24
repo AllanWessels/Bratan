@@ -4,7 +4,8 @@ import {
   useQueryClient,
   type UseQueryOptions,
 } from "@tanstack/react-query";
-import { request } from "./client";
+import { useEffect, useRef, useState } from "react";
+import { BackendError, request } from "./client";
 import type {
   BratanConfig,
   ConnectionTest,
@@ -12,8 +13,15 @@ import type {
   CorpusSearchRequest,
   CorpusSearchResponse,
   IngestStatus,
+  IterationReport,
+  LoopStartRequest,
+  LoopStartResponse,
+  LoopStatus,
+  LoopStopResponse,
+  LoopStreamEvent,
   Passage,
   ProbeResult,
+  ReportSummary,
   SaveStepRequest,
   SaveStepResponse,
   SeedDraft,
@@ -23,6 +31,7 @@ import type {
   SeedValidateRequest,
   SeedValidateResponse,
   SetupState,
+  StopReason,
   TestAnthropicRequest,
   TestVectorDBRequest,
   TestVLLMRequest,
@@ -200,4 +209,135 @@ export function useDeleteDraft() {
       request<{ ok: boolean }>(`/api/seed/drafts/${id}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["seed-drafts"] }),
   });
+}
+
+// ---------- M2 — Reports + loop control ----------
+
+export function useLatestReport(
+  options?: Omit<UseQueryOptions<IterationReport | null>, "queryKey" | "queryFn">,
+) {
+  return useQuery<IterationReport | null>({
+    queryKey: ["report-latest"],
+    queryFn: async () => {
+      try {
+        return await request<IterationReport>("/api/reports/latest");
+      } catch (err) {
+        if (err instanceof BackendError && err.status === 404) return null;
+        throw err;
+      }
+    },
+    ...options,
+  });
+}
+
+export function useReportHistory() {
+  return useQuery<ReportSummary[]>({
+    queryKey: ["report-history"],
+    queryFn: () => request<ReportSummary[]>("/api/reports/history"),
+  });
+}
+
+export function useLoopStatus(pollMs: number | false = 2000) {
+  return useQuery<LoopStatus>({
+    queryKey: ["loop-status"],
+    queryFn: () => request<LoopStatus>("/api/loop/status"),
+    refetchInterval: pollMs === false ? false : pollMs,
+  });
+}
+
+export function useStartLoop() {
+  const qc = useQueryClient();
+  return useMutation<LoopStartResponse, Error, LoopStartRequest>({
+    mutationFn: (body) =>
+      request<LoopStartResponse>("/api/loop/start", { method: "POST", body }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["loop-status"] });
+    },
+  });
+}
+
+export function useStopLoop() {
+  const qc = useQueryClient();
+  return useMutation<LoopStopResponse, Error, void>({
+    mutationFn: () => request<LoopStopResponse>("/api/loop/stop", { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["loop-status"] }),
+  });
+}
+
+interface LoopStreamState {
+  reports: IterationReport[];
+  lastStopReason: StopReason | null;
+  connected: boolean;
+}
+
+/**
+ * WebSocket-backed live stream of iteration events. Keeps a running list of
+ * reports (most recent last) and the last stop_reason seen.
+ *
+ * Note: the WebSocket URL is computed from `window.location` so it works both
+ * under the dev proxy (vite -> :8000) and in production builds.
+ */
+export function useLoopStream(enabled = true): LoopStreamState {
+  const [state, setState] = useState<LoopStreamState>({
+    reports: [],
+    lastStopReason: null,
+    connected: false,
+  });
+  const wsRef = useRef<WebSocket | null>(null);
+
+  useEffect(() => {
+    if (!enabled || typeof window === "undefined") return;
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const url = `${proto}//${window.location.host}/api/loop/stream`;
+
+    let cancelled = false;
+    const ws = new WebSocket(url);
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      if (!cancelled) setState((s) => ({ ...s, connected: true }));
+    };
+    ws.onclose = () => {
+      if (!cancelled) setState((s) => ({ ...s, connected: false }));
+    };
+    ws.onerror = () => {
+      if (!cancelled) setState((s) => ({ ...s, connected: false }));
+    };
+    ws.onmessage = (ev) => {
+      if (cancelled) return;
+      try {
+        const event = JSON.parse(ev.data) as LoopStreamEvent;
+        setState((s) => {
+          if (event.type === "iteration_complete" && event.report) {
+            // Dedup by (iteration, timestamp).
+            const seenKey = (r: IterationReport) => `${r.iteration}::${r.timestamp}`;
+            const key = seenKey(event.report);
+            if (s.reports.some((r) => seenKey(r) === key)) return s;
+            return {
+              ...s,
+              reports: [...s.reports, event.report],
+              lastStopReason: event.report.stop_reason ?? s.lastStopReason,
+            };
+          }
+          if (event.type === "loop_stopped") {
+            return { ...s, lastStopReason: s.lastStopReason ?? "manual" };
+          }
+          return s;
+        });
+      } catch {
+        // Ignore malformed payloads.
+      }
+    };
+
+    return () => {
+      cancelled = true;
+      try {
+        ws.close();
+      } catch {
+        /* ignore */
+      }
+    };
+  }, [enabled]);
+
+  return state;
 }

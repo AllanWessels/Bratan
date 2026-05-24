@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Settings as SettingsIcon } from "lucide-react";
+import { Activity, Settings as SettingsIcon } from "lucide-react";
 import { useConfig, useSeedList } from "@/api/hooks";
 import { Spinner } from "@/components/Spinner";
 import { CorpusBrowser } from "./authoring/CorpusBrowser";
@@ -58,6 +58,12 @@ export function Authoring() {
                 />
               </div>
             </div>
+            <Link
+              to="/run"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
+            >
+              <Activity className="h-4 w-4" /> Run
+            </Link>
             <Link
               to="/settings"
               className="inline-flex items-center gap-1.5 rounded-xl bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"

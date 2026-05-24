@@ -248,3 +248,126 @@ export interface SeedListResponse {
   target_n: number;
   progress: number;
 }
+
+// ---------------------------------------------------------------------------
+// M2 — IterationReport + loop control
+// ---------------------------------------------------------------------------
+
+export const STOP_REASONS = [
+  "convergence",
+  "budget",
+  "max_iterations",
+  "anchor_regression",
+  "judge_drift",
+  "blue_stall",
+  "manual",
+] as const;
+export type StopReason = (typeof STOP_REASONS)[number];
+
+export interface CostBlock {
+  oracle_calls: number;
+  prejudge_calls: number;
+  cache_hits: number;
+  usd_spent: number;
+  tokens_in: number;
+  tokens_out: number;
+}
+
+export interface LatencyBlock {
+  p50_total_ms: number;
+  p95_total_ms: number;
+  p50_retrieval_ms: number;
+  p95_retrieval_ms: number;
+  p50_generation_ms: number;
+  p95_generation_ms: number;
+}
+
+export interface DriftBlock {
+  samples_checked: number;
+  disagreement_rate: number;
+}
+
+export interface CategoryStats {
+  count: number;
+  avg_composite: number;
+  pass_rate: number;
+}
+
+export interface CaseScore {
+  case_id: string;
+  composite: number;
+  retrieval_recall_at_5: number;
+  answer_correctness: number | null;
+  faithfulness: number | null;
+  failure_category: FailureCategory;
+  judge_mode: string;
+  latency_ms: number;
+}
+
+export interface Regression {
+  case_id: string;
+  previous: number;
+  current: number;
+}
+
+export interface IterationReport {
+  timestamp: string;
+  iteration: number;
+  pipeline_manifest_hash: string;
+  test_set_size: number;
+  composite_mean: number;
+  composite_stdev: number;
+  pass_rate_at_0_6: number;
+  per_category: Record<string, CategoryStats>;
+  regressions: Regression[];
+  recoveries: string[];
+  by_case: CaseScore[];
+  cost: CostBlock;
+  latency: LatencyBlock;
+  drift: DriftBlock;
+  judge_weights_hash: string;
+  low_confidence_verdicts: Array<Record<string, unknown>>;
+  stop_reason: StopReason | null;
+}
+
+export interface ReportSummary {
+  timestamp: string;
+  iteration: number;
+  composite_mean: number;
+  pass_rate_at_0_6: number;
+  stop_reason: StopReason | null;
+}
+
+export interface LoopStartRequest {
+  iterations: number;
+  budget_usd: number | null;
+  skip_red: boolean;
+  no_agents: boolean;
+}
+
+export interface LoopStartResponse {
+  task_id: string;
+  started_at: string;
+}
+
+export interface LoopStopResponse {
+  ok: boolean;
+  was_running: boolean;
+}
+
+export interface LoopStatus {
+  running: boolean;
+  task_id: string | null;
+  current_iteration: number | null;
+  started_at: string | null;
+  iterations_requested: number;
+  last_report_ts: string | null;
+}
+
+export type LoopStreamEventType = "iteration_complete" | "loop_stopped" | "error";
+
+export interface LoopStreamEvent {
+  type: LoopStreamEventType;
+  report: IterationReport | null;
+  timestamp: string;
+}

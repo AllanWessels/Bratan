@@ -55,6 +55,15 @@ def test_app_routes_present() -> None:
         "/api/seed/validate",
         "/api/seed/save",
         "/api/seed/list",
+        # M2 dashboard read endpoints
+        "/api/reports/latest",
+        "/api/reports/history",
+        "/api/reports/{timestamp}",
+        # M2 loop control
+        "/api/loop/start",
+        "/api/loop/stop",
+        "/api/loop/status",
+        "/api/loop/stream",
     ]:
         assert required in paths, f"missing route: {required}"
 

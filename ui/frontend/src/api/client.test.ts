@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { BackendError, request } from "./client";
 
 const originalFetch = globalThis.fetch;
@@ -39,7 +39,7 @@ describe("request", () => {
       return new Response("null", { status: 200 });
     });
     await request("/api/seed/save", { method: "POST", body: { question: "q" } });
-    expect(JSON.parse(capturedBody as string)).toEqual({ question: "q" });
+    expect(JSON.parse(capturedBody as unknown as string)).toEqual({ question: "q" });
   });
 
   it("throws BackendError on non-2xx and surfaces the detail message", async () => {
