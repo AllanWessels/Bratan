@@ -156,15 +156,17 @@ describe("ResetVectorStoreButton", () => {
     // Capture the options object and drive its onSuccess by hand — this is
     // the cleanest way to exercise the toast + close flow without spinning
     // up react-query for real.
-    const mutate = vi.fn(
-      (_vars: unknown, opts: { onSuccess: (res: unknown) => void }) => {
-        opts.onSuccess({
-          ok: true,
-          path_wiped: "/abs/.chroma",
-          client_dropped: true,
-        });
-      },
-    );
+    const mutate = vi.fn((...args: any[]) => {
+      const [, opts] = args as [
+        unknown,
+        { onSuccess: (res: unknown) => void },
+      ];
+      opts.onSuccess({
+        ok: true,
+        path_wiped: "/abs/.chroma",
+        client_dropped: true,
+      });
+    });
     mocks.useResetVectorStore.mockReturnValue(makeResetReturn({ mutate }));
 
     const user = userEvent.setup();
@@ -216,11 +218,10 @@ describe("ResetVectorStoreButton", () => {
   });
 
   it("fires an error toast when the mutation rejects", async () => {
-    const mutate = vi.fn(
-      (_vars: unknown, opts: { onError: (err: Error) => void }) => {
-        opts.onError(new Error("server unreachable"));
-      },
-    );
+    const mutate = vi.fn((...args: any[]) => {
+      const [, opts] = args as [unknown, { onError: (err: Error) => void }];
+      opts.onError(new Error("server unreachable"));
+    });
     mocks.useResetVectorStore.mockReturnValue(makeResetReturn({ mutate }));
 
     const user = userEvent.setup();
