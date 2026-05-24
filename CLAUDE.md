@@ -79,6 +79,16 @@ pyproject.toml                  uv-managed Python project
    why, not what. The agents read each other's commit messages as signal.
 5. **Never modify `/corpus/` or `/test_cases/seed.jsonl`.** These are the
    anchor. If those move, regression detection becomes meaningless.
+6. **Fan out everywhere it's possible.** Any task that can be split into
+   independent sub-tasks SHOULD be — dispatch sub-agents via the Agent tool
+   with `run_in_background: true`, then continue with other work and wait
+   for completion notifications. This applies to test runs (pytest +
+   vitest + Playwright + live integration in parallel), to multi-component
+   refactors (frontend + backend + tests in parallel agents with a shared
+   contract), and to verification cycles (one agent per check). The main
+   conversation context is finite and fills with log spam fast; the project
+   has been bitten by "I'll just do this in-line" multiple times. Default to
+   parallel; serial is the exception that needs justification.
 
 ## Run the loop
 
