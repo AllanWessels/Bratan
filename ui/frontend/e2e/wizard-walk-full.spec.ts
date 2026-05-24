@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import yaml from "js-yaml";
+import { resetBratanState } from "./helpers";
 
 /**
  * Wizard-walk verifier — drives ALL 8 setup-wizard steps in a real browser
@@ -476,4 +477,177 @@ test("wizard-walk: drives all 8 steps end-to-end and persists to YAML", async ({
   if (consoleErrors.length > 0) {
     console.log("[verifier] console errors during run:\n" + consoleErrors.join("\n"));
   }
+});
+
+// ---------------------------------------------------------------------------
+// Row 9 — Step 3 -> Step 6 VRAM cascade
+//
+// Toggling `use_local_embedding=false` in Step 3 must cause the embedding row
+// to vanish from the Step 6 VRAM breakdown AND the total MB to drop by the
+// embedding model's footprint (BG-small = 130 MB; see VRAM_TABLE in
+// Step6GPU.tsx). The unit test catches this at the component level; this
+// proves the cascade at the full-flow level (Step3Models writes to config,
+// useConfig refetches, Step6GPU re-renders the breakdown).
+// ---------------------------------------------------------------------------
+test("Step 3 -> Step 6: toggling use_local_embedding=false drops embedding row from VRAM breakdown", async ({
+  page,
+}) => {
+  resetBratanState();
+
+  await page.goto("/");
+  await expect(page.getByText(/Step 1 of 8/)).toBeVisible({ timeout: 15_000 });
+
+  // Step 1 — minimal: just fill required fields and advance.
+  await page.getByLabel(/project name/i).fill("cascade-walk");
+  await page.getByLabel(/corpus path/i).fill("./corpus");
+  const save1 = awaitSaveStep(page, 1);
+  await page.getByLabel(/project name/i).press("End");
+  await save1;
+  await page.getByTestId("wizard-next").click();
+  await expect(page.getByText(/Step 2 of 8/)).toBeVisible({ timeout: 10_000 });
+
+  // Step 2 — accept chroma defaults and advance.
+  await page.getByTestId("wizard-next").click();
+  await expect(page.getByText(/Step 3 of 8/)).toBeVisible({ timeout: 10_000 });
+
+  // Step 3 — uncheck the first checkbox (Local embedding). The three Toggles
+  // render input[type=checkbox] in DOM order: embedding, reranker, prejudge.
+  const checkboxes = page.locator('input[type="checkbox"]');
+  const embeddingCb = checkboxes.nth(0);
+  await expect(embeddingCb).toBeChecked();
+
+  // Register the save-step listener BEFORE the click so we don't miss the
+  // debounced POST. Then click, nudge, await.
+  const save3 = awaitSaveStep(page, 3);
+  await embeddingCb.click();
+  await expect(embeddingCb).not.toBeChecked();
+  await page.getByLabel(/Oracle model/i).press("End");
+  await save3;
+
+  // Advance: Step 4, Step 5 -> Step 6.
+  await page.getByTestId("wizard-next").click();
+  await expect(page.getByText(/Step 4 of 8/)).toBeVisible({ timeout: 10_000 });
+  await page.getByTestId("wizard-next").click();
+  await expect(page.getByText(/Step 5 of 8/)).toBeVisible({ timeout: 10_000 });
+  await page.getByTestId("wizard-next").click();
+  await expect(page.getByText(/Step 6 of 8/)).toBeVisible({ timeout: 10_000 });
+
+  // Wait for the GPU probe + breakdown card to render.
+  await expect(page.getByTestId("vram-breakdown")).toBeVisible({ timeout: 20_000 });
+
+  // The embedding row must NOT be present; reranker + prejudge stay.
+  await expect(page.getByTestId("vram-row-embedding")).toHaveCount(0);
+  await expect(page.getByTestId("vram-row-reranker")).toBeVisible();
+  await expect(page.getByTestId("vram-row-prejudge")).toBeVisible();
+
+  // Total MB must equal reranker (2300) + prejudge (5000) = 7300 with the
+  // default model selections (bge-reranker-v2-m3 + Qwen2.5-7B-Instruct-AWQ).
+  // We don't lock the exact figure in case the VRAM_TABLE shifts; instead we
+  // assert the parsed total is strictly less than the all-on baseline of
+  // 7430 MB (which would include the +130 MB BG-small embedding).
+  const totalText = (await page.getByTestId("vram-total-mb").textContent()) ?? "";
+  const totalMb = parseInt(totalText.replace(/[^\d]/g, ""), 10);
+  expect(Number.isFinite(totalMb)).toBe(true);
+  expect(totalMb).toBeGreaterThan(0);
+  expect(totalMb).toBeLessThan(7430);
+  // And the per-row sum must match the displayed total.
+  const rerankerText =
+    (await page.getByTestId("vram-mb-reranker").textContent()) ?? "";
+  const prejudgeText =
+    (await page.getByTestId("vram-mb-prejudge").textContent()) ?? "";
+  const sum =
+    parseInt(rerankerText.replace(/[^\d]/g, ""), 10) +
+    parseInt(prejudgeText.replace(/[^\d]/g, ""), 10);
+  expect(totalMb).toBe(sum);
+});
+
+// ---------------------------------------------------------------------------
+// Row 15 — Step 2 non-chroma persistence (Pinecone has the most fields)
+//
+// Switching the adapter to Pinecone and filling all five Pinecone fields must
+// round-trip through Pydantic to bratan.config.yaml. The unit actuation tests
+// confirm the payload SHAPE; only e2e + YAML readback confirms the backend
+// actually persists every non-chroma field.
+// ---------------------------------------------------------------------------
+interface PineconeVectorDb {
+  adapter: string;
+  pinecone_api_key: string | null;
+  pinecone_index: string | null;
+  pinecone_cloud: string;
+  pinecone_region: string;
+  pinecone_namespace: string;
+}
+
+test("Step 2 -> Finish: Pinecone adapter persists all 5 fields to bratan.config.yaml", async ({
+  page,
+}) => {
+  resetBratanState();
+
+  await page.goto("/");
+  await expect(page.getByText(/Step 1 of 8/)).toBeVisible({ timeout: 15_000 });
+
+  // Step 1 — minimal.
+  await page.getByLabel(/project name/i).fill("pinecone-walk");
+  await page.getByLabel(/corpus path/i).fill("./corpus");
+  const save1 = awaitSaveStep(page, 1);
+  await page.getByLabel(/project name/i).press("End");
+  await save1;
+  await page.getByTestId("wizard-next").click();
+  await expect(page.getByText(/Step 2 of 8/)).toBeVisible({ timeout: 10_000 });
+
+  // Step 2 — switch to Pinecone, fill all 5 fields.
+  await page.getByRole("button", { name: /Pinecone/i }).click();
+  await expect(page.getByLabel(/Index name/i)).toBeVisible({ timeout: 5_000 });
+
+  const apiKey = page.getByLabel(/^API key$/i);
+  const indexName = page.getByLabel(/Index name/i);
+  const cloud = page.getByLabel(/^Cloud$/i);
+  const region = page.getByLabel(/^Region$/i);
+  const namespace = page.getByLabel(/^Namespace$/i);
+
+  await apiKey.fill("pcsk-e2e-verifier-fake");
+  await indexName.fill("bratan-e2e-index");
+  await cloud.fill("gcp");
+  await region.fill("us-central1");
+  await namespace.fill("verifier-ns");
+
+  const save2 = awaitSaveStep(page, 2);
+  await namespace.press("End");
+  await save2;
+  await page.getByTestId("wizard-next").click();
+  await expect(page.getByText(/Step 3 of 8/)).toBeVisible({ timeout: 10_000 });
+
+  // Step 3 — minimal API key so the wizard treats step 3 as saved.
+  await page.getByLabel(/API key/i).first().fill("sk-ant-pinecone-fake");
+  const save3 = awaitSaveStep(page, 3);
+  await page.getByLabel(/Oracle model/i).press("End");
+  await save3;
+  await page.getByTestId("wizard-next").click();
+  await expect(page.getByText(/Step 4 of 8/)).toBeVisible({ timeout: 10_000 });
+
+  // Steps 4, 5, 6, 7 — accept defaults; just advance.
+  await page.getByTestId("wizard-next").click();
+  await expect(page.getByText(/Step 5 of 8/)).toBeVisible({ timeout: 10_000 });
+  await page.getByTestId("wizard-next").click();
+  await expect(page.getByText(/Step 6 of 8/)).toBeVisible({ timeout: 10_000 });
+  await page.getByTestId("wizard-next").click();
+  await expect(page.getByText(/Step 7 of 8/)).toBeVisible({ timeout: 10_000 });
+  await page.getByTestId("wizard-next").click();
+  await expect(page.getByText(/Step 8 of 8/)).toBeVisible({ timeout: 10_000 });
+
+  // Step 8 — Finish.
+  await page.getByTestId("wizard-next").click();
+  await expect(page).toHaveURL(/\/authoring/, { timeout: 15_000 });
+
+  // Readback: bratan.config.yaml must reflect every Pinecone field.
+  expect(fs.existsSync(CONFIG_PATH)).toBe(true);
+  const text = fs.readFileSync(CONFIG_PATH, "utf-8");
+  const cfg = yaml.load(text) as { vector_db: PineconeVectorDb };
+
+  expect(cfg.vector_db.adapter).toBe("pinecone");
+  expect(cfg.vector_db.pinecone_api_key).toBe("pcsk-e2e-verifier-fake");
+  expect(cfg.vector_db.pinecone_index).toBe("bratan-e2e-index");
+  expect(cfg.vector_db.pinecone_cloud).toBe("gcp");
+  expect(cfg.vector_db.pinecone_region).toBe("us-central1");
+  expect(cfg.vector_db.pinecone_namespace).toBe("verifier-ns");
 });
