@@ -273,16 +273,17 @@ class ChromaAdapter(VectorDBAdapter):
     # ------------------------------------------------------------------
 
     def _project_root(self) -> Path:
-        """Repo root we launch the worker from.
+        """Repo root where `scripts/` lives — always derived from __file__.
 
-        The worker must be importable as `scripts.query_worker`, so CWD has to
-        be the project root. We honor BRATAN_PROJECT_ROOT (set by the wizard
-        + tests) and fall back to walking up from this file: `chroma.py` lives
-        at `pipeline/adapters/chroma.py`, so three parents up is the repo.
+        Intentionally NOT `BRATAN_PROJECT_ROOT`: that env var is a *data*
+        path (where `bratan.config.yaml` and `.chroma/` live), which the
+        wizard and tests set to a per-project tmpdir. The worker is a
+        *code* module that must be importable as `scripts.query_worker`,
+        and that import resolves only from the actual repo root. Under
+        pytest the two diverge — honoring BRATAN_PROJECT_ROOT here points
+        cwd at a tmpdir with no `scripts/`, and `python -m
+        scripts.query_worker` exits with ModuleNotFoundError.
         """
-        env_root = os.environ.get("BRATAN_PROJECT_ROOT")
-        if env_root:
-            return Path(env_root)
         return Path(__file__).resolve().parents[2]
 
     def _subprocess_call(self, op: str, **payload: Any) -> dict[str, Any]:
