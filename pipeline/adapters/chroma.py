@@ -88,15 +88,23 @@ class ChromaAdapter(VectorDBAdapter):
         )
 
     def _recover(self) -> None:
-        """Drop the stale client, nuke the on-disk path, re-init from a clean slate."""
+        """Drop the stale client, nuke the on-disk path, re-init from a clean slate.
+
+        Sequence matters: chromadb's Rust bindings hold process-level state
+        per persistent path. To get out of the "readonly database" /
+        "no such table: tenants" hole, we must (a) call client.reset() to
+        clear chromadb's own internal caches, (b) drop our local reference,
+        (c) wipe the on-disk path, (d) reconnect.
+        """
         logger.warning("ChromaDB schema unreadable at %s — recovering", self._path)
-        # Drop the stale client first so it releases the sqlite handle.
         self._collection = None
         if self._client is not None:
             try:
+                # reset() requires allow_reset=True in Settings (we set it).
+                # It also clears chromadb's internal SqliteAPI caches.
                 self._client.reset()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("client.reset() during recovery raised: %s", exc)
             self._client = None
         if self._path.exists():
             shutil.rmtree(self._path, ignore_errors=True)
