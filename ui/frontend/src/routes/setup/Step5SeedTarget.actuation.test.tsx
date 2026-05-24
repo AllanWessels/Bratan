@@ -1,14 +1,14 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { Step5SeedTarget } from "./Step5SeedTarget";
-import { drag, sliderPct } from "@/test/actuation-helpers";
 
 /**
- * Drives the single slider on Step5SeedTarget to multiple values and
- * asserts every change lands in the autosave payload, plus the fill
- * percentage reflects the value-to-range ratio.
+ * Drives the number input on Step5SeedTarget to multiple values and
+ * asserts every change lands in the autosave payload. Was previously a
+ * slider-driven test; the <Slider> was replaced with <NumberInput>
+ * because the range input's fill direction misbehaved.
  */
 
 const originalFetch = globalThis.fetch;
@@ -55,9 +55,11 @@ afterEach(() => {
 });
 
 describe("Step5SeedTarget actuation", () => {
-  it("dragging to 100 lands in the save payload as project.seed_target_n", async () => {
+  it("typing 100 lands in the save payload as project.seed_target_n", async () => {
     render(withProviders(<Step5SeedTarget config={null} />));
-    drag(screen.getByLabelText(/target number of seed cases/i), 100);
+    fireEvent.change(screen.getByLabelText(/target number of seed cases/i), {
+      target: { value: "100" },
+    });
     await flushAutoSave();
     const save = captured
       .filter((c) => c.url.includes("/api/setup/save-step"))
@@ -66,53 +68,59 @@ describe("Step5SeedTarget actuation", () => {
     expect(data.project.seed_target_n).toBe(100);
   });
 
-  it("dragging respects the step (5) — values snap to multiples of 5", async () => {
+  it("typing an out-of-range high value still updates the payload but flags an error", async () => {
     render(withProviders(<Step5SeedTarget config={null} />));
-    drag(screen.getByLabelText(/target number of seed cases/i), 80);
+    fireEvent.change(screen.getByLabelText(/target number of seed cases/i), {
+      target: { value: "5000" },
+    });
+    // The user sees an "out of range" hint, but the parent still gets the value
+    // so it's not silently dropped — the parent can clamp at submit time.
+    expect(
+      screen.getByLabelText(/target number of seed cases/i),
+    ).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByText(/Min 10, Max 200/i)).toBeInTheDocument();
+    await flushAutoSave();
+    const save = captured
+      .filter((c) => c.url.includes("/api/setup/save-step"))
+      .at(-1)!;
+    const data = (save.body as { data: { project: { seed_target_n: number } } }).data;
+    expect(data.project.seed_target_n).toBe(5000);
+  });
+
+  it("typing an out-of-range low value flags the error", () => {
+    render(withProviders(<Step5SeedTarget config={null} />));
+    fireEvent.change(screen.getByLabelText(/target number of seed cases/i), {
+      target: { value: "5" },
+    });
+    expect(screen.getByText(/Min 10, Max 200/i)).toBeInTheDocument();
+  });
+
+  it("typing 30 lands in the save payload (boundary of recommended range)", async () => {
+    render(withProviders(<Step5SeedTarget config={null} />));
+    fireEvent.change(screen.getByLabelText(/target number of seed cases/i), {
+      target: { value: "30" },
+    });
     await flushAutoSave();
     const data = (
       captured
         .filter((c) => c.url.includes("/api/setup/save-step"))
         .at(-1)!.body as { data: { project: { seed_target_n: number } } }
     ).data;
-    expect(data.project.seed_target_n % 5).toBe(0);
+    expect(data.project.seed_target_n).toBe(30);
   });
 
-  it("dragging to max clamps to 200", async () => {
-    render(withProviders(<Step5SeedTarget config={null} />));
-    drag(screen.getByLabelText(/target number of seed cases/i), 5000);
-    await flushAutoSave();
-    const data = (
-      captured
-        .filter((c) => c.url.includes("/api/setup/save-step"))
-        .at(-1)!.body as { data: { project: { seed_target_n: number } } }
-    ).data;
-    expect(data.project.seed_target_n).toBe(200);
-  });
-
-  it("dragging to min clamps to 10", async () => {
-    render(withProviders(<Step5SeedTarget config={null} />));
-    drag(screen.getByLabelText(/target number of seed cases/i), -5);
-    await flushAutoSave();
-    const data = (
-      captured
-        .filter((c) => c.url.includes("/api/setup/save-step"))
-        .at(-1)!.body as { data: { project: { seed_target_n: number } } }
-    ).data;
-    expect(data.project.seed_target_n).toBe(10);
-  });
-
-  it("the slider exposes a percentage that matches (value-min)/(max-min)", () => {
-    render(withProviders(<Step5SeedTarget config={null} />));
-    const input = screen.getByLabelText(/target number of seed cases/i);
-    // Default value 50, range 10..200 → (50-10)/190 ≈ 21.05%
-    expect(sliderPct(input)).toBeCloseTo(((50 - 10) / 190) * 100, 1);
-  });
-
-  it("the slider uses a deterministic data-testid", () => {
+  it("the input exposes a deterministic data-testid", () => {
     render(withProviders(<Step5SeedTarget config={null} />));
     expect(
-      screen.getByTestId("slider-target-number-of-seed-cases"),
+      screen.getByTestId("number-input-target-number-of-seed-cases"),
     ).toBeInTheDocument();
+  });
+
+  it("the input exposes aria-valuemin / aria-valuemax / aria-valuenow", () => {
+    render(withProviders(<Step5SeedTarget config={null} />));
+    const input = screen.getByLabelText(/target number of seed cases/i);
+    expect(input).toHaveAttribute("aria-valuemin", "10");
+    expect(input).toHaveAttribute("aria-valuemax", "200");
+    expect(input).toHaveAttribute("aria-valuenow", "50");
   });
 });
