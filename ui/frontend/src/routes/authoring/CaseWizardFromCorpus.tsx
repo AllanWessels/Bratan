@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   ChevronLeft,
   ChevronRight,
   FileText,
   MousePointerClick,
+  Play,
   Save,
   Quote,
   RefreshCw,
@@ -15,9 +17,11 @@ import { Spinner } from "@/components/Spinner";
 import {
   useCorpusFiles,
   useCorpusPassagesPaginated,
+  useIngestStatus,
   useSaveDraft,
   useSeedSave,
   useSeedValidate,
+  useStartIngest,
 } from "@/api/hooks";
 import { useUIStore } from "@/store/uiStore";
 import {
@@ -100,6 +104,23 @@ export function CaseWizardFromCorpus() {
   const pulseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const files = useCorpusFiles();
+  const startIngest = useStartIngest();
+  const ingestStatus = useIngestStatus(500);
+  const ingestRunning = ingestStatus.data?.state === "running";
+  const qc = useQueryClient();
+  useEffect(() => {
+    if (ingestStatus.data?.state === "succeeded") {
+      pushToast("Corpus ingested", "success");
+      qc.invalidateQueries({ queryKey: ["corpus-files"] });
+    } else if (ingestStatus.data?.state === "failed") {
+      pushToast(
+        `Ingest failed: ${ingestStatus.data.error ?? "unknown"}`,
+        "error",
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ingestStatus.data?.state]);
+
   const passages = useCorpusPassagesPaginated(
     draft.selectedFile,
     page * PAGE_LIMIT,
@@ -325,6 +346,38 @@ export function CaseWizardFromCorpus() {
             </span>
           }
         >
+          <div className="mb-3 flex flex-col gap-1.5">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => startIngest.mutate()}
+              loading={startIngest.isPending || ingestRunning}
+              disabled={ingestRunning}
+              data-testid="from-corpus-ingest-corpus"
+            >
+              <Play className="h-3.5 w-3.5" /> Ingest corpus
+            </Button>
+            {ingestRunning && ingestStatus.data && (
+              <p
+                className="text-[11px] text-slate-500"
+                data-testid="from-corpus-ingest-progress"
+              >
+                {ingestStatus.data.files_done} / {ingestStatus.data.files_total}{" "}
+                files · {ingestStatus.data.chunks_written} chunks
+                {ingestStatus.data.current_file && (
+                  <>
+                    <br />
+                    <span
+                      className="truncate"
+                      title={ingestStatus.data.current_file}
+                    >
+                      {ingestStatus.data.current_file}
+                    </span>
+                  </>
+                )}
+              </p>
+            )}
+          </div>
           <div
             className="max-h-[60vh] overflow-y-auto"
             data-testid="from-corpus-file-list"
@@ -338,7 +391,7 @@ export function CaseWizardFromCorpus() {
             ) : !files.data || files.data.length === 0 ? (
               <p className="py-4 text-center text-xs text-slate-500">
                 No files in corpus. Drop documents into your corpus path and
-                ingest.
+                click <span className="font-medium">Ingest corpus</span> above.
               </p>
             ) : (
               <ul className="flex flex-col gap-1">

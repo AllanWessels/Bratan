@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Database, FileText, Play } from "lucide-react";
 import { Card } from "@/components/Card";
 import { Button } from "@/components/Button";
@@ -14,12 +15,18 @@ export function CorpusBrowser() {
   // ingests where the per-file work dominates.
   const status = useIngestStatus(500);
   const pushToast = useUIStore((s) => s.pushToast);
+  const qc = useQueryClient();
 
   const ingestRunning = status.data?.state === "running";
 
   useEffect(() => {
     if (status.data?.state === "succeeded") {
       pushToast("Corpus ingested", "success");
+      // The file list query (["corpus-files"]) was cached pre-ingest and
+      // shows `ingested: false` for every file. Without this invalidate
+      // the user sees the "Corpus ingested" toast and then the badges
+      // STILL say "not ingested" — the silent-fail UX bug from 2026-05-24.
+      qc.invalidateQueries({ queryKey: ["corpus-files"] });
     } else if (status.data?.state === "failed") {
       pushToast(`Ingest failed: ${status.data.error ?? "unknown"}`, "error");
     }
