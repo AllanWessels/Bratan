@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Database, Sparkles } from "lucide-react";
+import { Database, Code2 } from "lucide-react";
 import { Card } from "@/components/Card";
 import { Field, TextInput } from "@/components/Field";
 import { Button } from "@/components/Button";
@@ -21,15 +21,22 @@ const DEFAULTS: VectorDBConfig = {
   qdrant_api_key: null,
   pinecone_api_key: null,
   pinecone_index: null,
+  pinecone_cloud: "aws",
+  pinecone_region: "us-east-1",
+  pinecone_namespace: "",
   weaviate_url: null,
+  weaviate_api_key: null,
+  weaviate_collection: "Bratan",
   pgvector_dsn: null,
+  pgvector_table: "bratan_chunks",
+  other_adapter_module: null,
+  other_adapter_class: null,
 };
 
 interface AdapterOption {
   id: VectorDBAdapter;
   label: string;
   blurb: string;
-  enabled: boolean;
 }
 
 const ADAPTERS: AdapterOption[] = [
@@ -37,12 +44,20 @@ const ADAPTERS: AdapterOption[] = [
     id: "chroma",
     label: "ChromaDB",
     blurb: "Local, file-backed. No external service required.",
-    enabled: true,
   },
-  { id: "qdrant", label: "Qdrant", blurb: "Self-hosted or cloud.", enabled: true },
-  { id: "pinecone", label: "Pinecone", blurb: "Managed service.", enabled: false },
-  { id: "weaviate", label: "Weaviate", blurb: "Self-hosted or cloud.", enabled: false },
-  { id: "pgvector", label: "pgvector", blurb: "Postgres extension.", enabled: false },
+  { id: "qdrant", label: "Qdrant", blurb: "Self-hosted or cloud." },
+  { id: "pinecone", label: "Pinecone", blurb: "Managed serverless or pod-based." },
+  {
+    id: "weaviate",
+    label: "Weaviate",
+    blurb: "Self-hosted or cloud. Native BM25 + vector hybrid.",
+  },
+  { id: "pgvector", label: "pgvector", blurb: "Postgres with the pgvector extension." },
+  {
+    id: "other",
+    label: "Other / custom",
+    blurb: "Plug in your own VectorDBAdapter subclass.",
+  },
 ];
 
 export function Step2VectorDB({ config }: Props) {
@@ -50,7 +65,7 @@ export function Step2VectorDB({ config }: Props) {
   const testMutation = useTestVectorDB();
 
   useEffect(() => {
-    if (config?.vector_db) setData(config.vector_db);
+    if (config?.vector_db) setData({ ...DEFAULTS, ...config.vector_db });
   }, [config]);
 
   useAutoSaveStep(2, data);
@@ -67,26 +82,25 @@ export function Step2VectorDB({ config }: Props) {
         : "fail"
       : "idle";
 
+  const isOther = data.adapter === "other";
+
   return (
     <Card
       title="Vector database"
-      description="Pick the store that will hold embedded corpus chunks. Only Chroma is enabled in M1."
+      description="Pick the store that will hold embedded corpus chunks. Five backends are bundled; pick 'Other' to plug in your own VectorDBAdapter subclass."
     >
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         {ADAPTERS.map((opt) => {
           const selected = data.adapter === opt.id;
+          const Icon = opt.id === "other" ? Code2 : Database;
           return (
             <button
               key={opt.id}
               type="button"
-              disabled={!opt.enabled}
-              onClick={() => opt.enabled && setData({ ...data, adapter: opt.id })}
+              onClick={() => setData({ ...data, adapter: opt.id })}
               aria-pressed={selected}
               className={cn(
-                "flex items-start gap-3 rounded-2xl border p-4 text-left transition-all",
-                opt.enabled
-                  ? "hover:border-brand-400 hover:shadow-sm"
-                  : "cursor-not-allowed opacity-60",
+                "flex items-start gap-3 rounded-2xl border p-4 text-left transition-all hover:border-brand-400 hover:shadow-sm",
                 selected
                   ? "border-brand-500 bg-brand-50 ring-2 ring-brand-200"
                   : "border-slate-200 bg-white",
@@ -99,18 +113,10 @@ export function Step2VectorDB({ config }: Props) {
                 )}
                 aria-hidden="true"
               >
-                <Database className="h-5 w-5" />
+                <Icon className="h-5 w-5" />
               </span>
               <div className="flex-1">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-semibold text-slate-900">{opt.label}</h3>
-                  {!opt.enabled && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-800">
-                      <Sparkles className="h-3 w-3" />
-                      ships in M5
-                    </span>
-                  )}
-                </div>
+                <h3 className="text-sm font-semibold text-slate-900">{opt.label}</h3>
                 <p className="mt-0.5 text-xs text-slate-500">{opt.blurb}</p>
               </div>
             </button>
@@ -172,6 +178,185 @@ export function Step2VectorDB({ config }: Props) {
               />
             )}
           </Field>
+        </div>
+      )}
+
+      {data.adapter === "pinecone" && (
+        <div className="mt-6 grid grid-cols-1 gap-5 md:grid-cols-2">
+          <Field label="API key" hint="From the Pinecone console.">
+            {(id) => (
+              <TextInput
+                id={id}
+                type="password"
+                value={data.pinecone_api_key ?? ""}
+                onChange={(e) =>
+                  setData({ ...data, pinecone_api_key: e.target.value || null })
+                }
+              />
+            )}
+          </Field>
+          <Field label="Index name" hint="Auto-created on first ingest if missing.">
+            {(id) => (
+              <TextInput
+                id={id}
+                value={data.pinecone_index ?? ""}
+                onChange={(e) =>
+                  setData({ ...data, pinecone_index: e.target.value || null })
+                }
+                placeholder="bratan-corpus"
+              />
+            )}
+          </Field>
+          <Field label="Cloud" hint="aws | gcp | azure">
+            {(id) => (
+              <TextInput
+                id={id}
+                value={data.pinecone_cloud ?? "aws"}
+                onChange={(e) => setData({ ...data, pinecone_cloud: e.target.value })}
+              />
+            )}
+          </Field>
+          <Field label="Region">
+            {(id) => (
+              <TextInput
+                id={id}
+                value={data.pinecone_region ?? "us-east-1"}
+                onChange={(e) => setData({ ...data, pinecone_region: e.target.value })}
+              />
+            )}
+          </Field>
+          <Field label="Namespace" hint="Optional; leave empty for default.">
+            {(id) => (
+              <TextInput
+                id={id}
+                value={data.pinecone_namespace ?? ""}
+                onChange={(e) => setData({ ...data, pinecone_namespace: e.target.value })}
+              />
+            )}
+          </Field>
+        </div>
+      )}
+
+      {data.adapter === "weaviate" && (
+        <div className="mt-6 grid grid-cols-1 gap-5 md:grid-cols-2">
+          <Field
+            label="Weaviate URL"
+            hint="http://localhost:8080 or https://<cluster>.weaviate.network"
+          >
+            {(id) => (
+              <TextInput
+                id={id}
+                value={data.weaviate_url ?? ""}
+                onChange={(e) =>
+                  setData({ ...data, weaviate_url: e.target.value || null })
+                }
+                placeholder="http://localhost:8080"
+              />
+            )}
+          </Field>
+          <Field label="API key" hint="Required for Weaviate Cloud; leave empty for local.">
+            {(id) => (
+              <TextInput
+                id={id}
+                type="password"
+                value={data.weaviate_api_key ?? ""}
+                onChange={(e) =>
+                  setData({ ...data, weaviate_api_key: e.target.value || null })
+                }
+              />
+            )}
+          </Field>
+          <Field label="Collection name">
+            {(id) => (
+              <TextInput
+                id={id}
+                value={data.weaviate_collection ?? "Bratan"}
+                onChange={(e) => setData({ ...data, weaviate_collection: e.target.value })}
+              />
+            )}
+          </Field>
+        </div>
+      )}
+
+      {data.adapter === "pgvector" && (
+        <div className="mt-6 grid grid-cols-1 gap-5 md:grid-cols-2">
+          <Field
+            label="Postgres DSN"
+            hint="postgresql://user:pw@host:port/db — must have the pgvector extension."
+          >
+            {(id) => (
+              <TextInput
+                id={id}
+                type="password"
+                value={data.pgvector_dsn ?? ""}
+                onChange={(e) =>
+                  setData({ ...data, pgvector_dsn: e.target.value || null })
+                }
+                placeholder="postgresql://bratan:pw@localhost:5432/bratan"
+              />
+            )}
+          </Field>
+          <Field label="Table name">
+            {(id) => (
+              <TextInput
+                id={id}
+                value={data.pgvector_table ?? "bratan_chunks"}
+                onChange={(e) => setData({ ...data, pgvector_table: e.target.value })}
+              />
+            )}
+          </Field>
+        </div>
+      )}
+
+      {isOther && (
+        <div className="mt-6 space-y-4">
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900">
+            <p className="font-medium">Custom adapter</p>
+            <p className="mt-1">
+              Point Bratan at a Python class that subclasses{" "}
+              <code className="rounded bg-amber-100 px-1">VectorDBAdapter</code>. Bratan
+              imports the module and instantiates the class with the full vector-DB
+              config as keyword arguments. See{" "}
+              <a
+                href="https://github.com/AllanWessels/Bratan/blob/main/docs/custom-adapter.md"
+                className="underline"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                docs/custom-adapter.md
+              </a>{" "}
+              for the full contract and a worked example.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+            <Field
+              label="Module path"
+              hint="The Python import path, e.g. 'myproject.adapters.milvus'."
+            >
+              {(id) => (
+                <TextInput
+                  id={id}
+                  value={data.other_adapter_module ?? ""}
+                  onChange={(e) =>
+                    setData({ ...data, other_adapter_module: e.target.value || null })
+                  }
+                  placeholder="myproject.adapters.milvus"
+                />
+              )}
+            </Field>
+            <Field label="Class name" hint="The VectorDBAdapter subclass to instantiate.">
+              {(id) => (
+                <TextInput
+                  id={id}
+                  value={data.other_adapter_class ?? ""}
+                  onChange={(e) =>
+                    setData({ ...data, other_adapter_class: e.target.value || null })
+                  }
+                  placeholder="MilvusAdapter"
+                />
+              )}
+            </Field>
+          </div>
         </div>
       )}
 
