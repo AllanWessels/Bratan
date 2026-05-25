@@ -765,22 +765,20 @@ def _ingested_path_counts() -> dict[str, int]:
         logger.debug("Vector store unavailable for corpus listing: %s", exc)
         return {}
 
-    counts: dict[str, int] = {}
+    # Route through adapter.count_chunks_by_path() so the long-running
+    # uvicorn doesn't read its stale in-memory chroma client — that's the
+    # 2026-05-24 bug where ingest succeeded but every file showed
+    # `ingested: false` because this function reached into _collection
+    # directly, bypassing the subprocess-query path the ingest worker
+    # writes through.
     try:
         from pipeline.adapters.chroma import ChromaAdapter
 
         if isinstance(adapter, ChromaAdapter):
-            collection = adapter._collection
-            data = collection.get(include=["metadatas"])
-            for meta in data.get("metadatas", []) or []:
-                if not meta:
-                    continue
-                path = meta.get("path")
-                if isinstance(path, str):
-                    counts[path] = counts.get(path, 0) + 1
+            return adapter.count_chunks_by_path()
     except Exception as exc:
         logger.debug("Could not enumerate chunks: %s", exc)
-    return counts
+    return {}
 
 
 # ---------------------------------------------------------------------------

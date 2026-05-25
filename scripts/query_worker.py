@@ -145,9 +145,35 @@ def _op_count(req: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "count": int(adapter.count())}
 
 
+def _op_count_by_path(req: dict[str, Any]) -> dict[str, Any]:
+    """Tally chunks per source-path metadata. Powers the file-list `ingested` flag.
+
+    Reads the same place vector_query does (the collection's metadata), but
+    aggregates by `metadata.path` instead of returning hits. Must live in a
+    subprocess because the long-running uvicorn's in-memory chroma client
+    cannot see chunks the ingest worker wrote.
+    """
+    from pipeline.adapters.chroma import ChromaAdapter
+
+    adapter = _build_adapter(req)
+    counts: dict[str, int] = {}
+    if isinstance(adapter, ChromaAdapter):
+        # Read directly from the freshly-opened collection in THIS process.
+        collection = adapter._collection
+        data = collection.get(include=["metadatas"])
+        for meta in data.get("metadatas", []) or []:
+            if not meta:
+                continue
+            path = meta.get("path")
+            if isinstance(path, str):
+                counts[path] = counts.get(path, 0) + 1
+    return {"ok": True, "counts": counts}
+
+
 _OPS = {
     "vector_query": _op_vector_query,
     "count": _op_count,
+    "count_by_path": _op_count_by_path,
 }
 
 

@@ -421,6 +421,34 @@ class ChromaAdapter(VectorDBAdapter):
         # ChromaDB has no native BM25 — caller stitches hybrid retrieval itself.
         return None
 
+    def count_chunks_by_path(self) -> dict[str, int]:
+        """Tally chunks per source-path metadata.
+
+        Powers the corpus-list `ingested` / `n_chunks` flags. Must go through
+        subprocess in the long-running uvicorn or it reads stale in-memory
+        state and reports every file as `ingested: false` even after a
+        successful ingest — the 2026-05-24 user-reported bug.
+        """
+        if self._subprocess_query:
+            result = self._subprocess_call("count_by_path")
+            counts = result.get("counts", {}) or {}
+            return {k: int(v) for k, v in counts.items()}
+        try:
+            data = self._with_recovery(
+                lambda: self._collection.get(include=["metadatas"])
+            )
+        except Exception as exc:
+            logger.debug("count_chunks_by_path raised: %s", exc)
+            return {}
+        counts: dict[str, int] = {}
+        for meta in data.get("metadatas", []) or []:
+            if not meta:
+                continue
+            path = meta.get("path")
+            if isinstance(path, str):
+                counts[path] = counts.get(path, 0) + 1
+        return counts
+
     def delete(self, ids: list[str]) -> None:
         if not ids:
             return
