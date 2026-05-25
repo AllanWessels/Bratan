@@ -95,6 +95,53 @@ export function rmrf(p: string): void {
   }
 }
 
+/** A small, safe-to-add marker file the e2e suite drops into corpus/ when
+ * the dev's real corpus is empty (the CI checkout has only README.md since
+ * PDFs are gitignored). Cleanup removes it; if the dev has their own PDFs
+ * locally, we don't touch them. */
+const CI_FIXTURE_FILE = path.join(CORPUS_DIR, "_e2e-ci-fixture.md");
+
+const CI_FIXTURE_CONTENT = `# E2E CI fixture
+
+This file exists so the Playwright wizard-walk / from-corpus / settings
+parity specs have a corpus file to chunk + browse in CI, where the dev's
+local PDFs are gitignored. It is created in beforeAll and removed in
+afterAll via \`ensureCorpusHasContent\` / \`cleanupCorpusFixture\`.
+
+The capybara is the world's largest rodent, native to South America.
+Otters hold hands while sleeping so they don't drift apart.
+Pit Lane exits open one hour before the race for reconnaissance laps.
+`;
+
+/** Drop a tiny markdown file into corpus/ if and only if no other extractable
+ * file is already present. Returns true if WE created it (so the caller
+ * knows whether to clean up in afterAll). Idempotent — second call is a
+ * no-op when a fixture file is already on disk. */
+export function ensureCorpusHasContent(): boolean {
+  if (!fs.existsSync(CORPUS_DIR)) {
+    fs.mkdirSync(CORPUS_DIR, { recursive: true });
+  }
+  const entries = fs.readdirSync(CORPUS_DIR);
+  // _iter_corpus_files skips README.md and any unsupported extension.
+  // Supported: .md, .txt, .html, .pdf.
+  const hasContent = entries.some(
+    (name) =>
+      name !== "README.md" &&
+      /\.(md|txt|html|pdf)$/i.test(name),
+  );
+  if (hasContent) {
+    return false;
+  }
+  fs.writeFileSync(CI_FIXTURE_FILE, CI_FIXTURE_CONTENT, "utf-8");
+  return true;
+}
+
+/** Inverse of ensureCorpusHasContent. Removes ONLY the file we wrote, never
+ * the dev's real corpus contents. */
+export function cleanupCorpusFixture(): void {
+  rmrf(CI_FIXTURE_FILE);
+}
+
 /** Wipe all state the wizard / authoring flow can write. */
 export function resetBratanState(): void {
   rmrf(CONFIG_PATH);

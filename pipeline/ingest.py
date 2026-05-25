@@ -288,10 +288,29 @@ def start_ingest_task(cfg: BratanConfig) -> IngestStatus:
             "--task-id",
             task_id,
         ]
-        # We must launch from the project root so `scripts.ingest_worker`
-        # is importable. The repo root is two parents above this file.
-        project_root = Path(
-            os.environ.get("BRATAN_PROJECT_ROOT", Path(__file__).resolve().parents[1])
+        # Always derive the worker-spawn root from __file__. NOT
+        # BRATAN_PROJECT_ROOT — that's a *data* path (where bratan.config.yaml
+        # and `.chroma/` live), which tests set to a tmp dir with no
+        # `scripts/` directory. Same lesson as the chroma `_project_root`
+        # fix in 703af35: code-root and data-root are two different things
+        # and conflating them breaks `python -m scripts.ingest_worker` with
+        # ModuleNotFoundError under pytest.
+        project_root = Path(__file__).resolve().parents[1]
+        # Scrub BRATAN_CHROMA_SUBPROCESS_QUERY from the child env. The uvicorn
+        # parent sets it for read-path isolation; the ingest worker is the
+        # *write* path and needs the direct in-process chromadb client. If
+        # we let the flag leak through, ChromaAdapter would refuse upserts
+        # with the defensive guard added alongside the query worker.
+        child_env = {k: v for k, v in os.environ.items() if k != "BRATAN_CHROMA_SUBPROCESS_QUERY"}
+        # Prepend project_root to PYTHONPATH so `python -m scripts.ingest_worker`
+        # resolves regardless of how the parent was launched. Under uvicorn
+        # PYTHONPATH is set at startup and cwd alone happens to suffice; under
+        # pytest neither is reliably true and the child exits with
+        # ModuleNotFoundError. Belt-and-suspenders alongside cwd= so both
+        # spawn paths work without depending on caller-supplied env.
+        existing_pythonpath = child_env.get("PYTHONPATH", "")
+        child_env["PYTHONPATH"] = (
+            str(project_root) + (os.pathsep + existing_pythonpath if existing_pythonpath else "")
         )
         try:
             proc = subprocess.Popen(
@@ -299,6 +318,7 @@ def start_ingest_task(cfg: BratanConfig) -> IngestStatus:
                 cwd=str(project_root),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                env=child_env,
                 # New session — uvicorn reload / SIGTERM shouldn't take
                 # the worker down with it; the worker decides when it's done.
                 start_new_session=True,
@@ -748,22 +768,20 @@ def _ingested_path_counts() -> dict[str, int]:
         logger.debug("Vector store unavailable for corpus listing: %s", exc)
         return {}
 
-    counts: dict[str, int] = {}
+    # Route through adapter.count_chunks_by_path() so the long-running
+    # uvicorn doesn't read its stale in-memory chroma client — that's the
+    # 2026-05-24 bug where ingest succeeded but every file showed
+    # `ingested: false` because this function reached into _collection
+    # directly, bypassing the subprocess-query path the ingest worker
+    # writes through.
     try:
         from pipeline.adapters.chroma import ChromaAdapter
 
         if isinstance(adapter, ChromaAdapter):
-            collection = adapter._collection
-            data = collection.get(include=["metadatas"])
-            for meta in data.get("metadatas", []) or []:
-                if not meta:
-                    continue
-                path = meta.get("path")
-                if isinstance(path, str):
-                    counts[path] = counts.get(path, 0) + 1
+            return adapter.count_chunks_by_path()
     except Exception as exc:
         logger.debug("Could not enumerate chunks: %s", exc)
-    return counts
+    return {}
 
 
 # ---------------------------------------------------------------------------

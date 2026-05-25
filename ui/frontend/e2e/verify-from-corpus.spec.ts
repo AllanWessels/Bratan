@@ -10,6 +10,15 @@ import { test, expect } from "@playwright/test";
 
 test.use({ baseURL: "http://127.0.0.1:5173" });
 
+// Ad-hoc verifier: requires a vite dev server on 5173 that the default
+// playwright.config.ts doesn't spawn. Run via the sibling
+// verify-from-corpus.config.ts locally. Skip in CI to keep the standard
+// suite green; CI's preview-on-4173 doesn't satisfy this baseURL.
+test.skip(
+  !!process.env.CI,
+  "ad-hoc verifier — requires vite dev on 5173 (use the sibling config locally)",
+);
+
 test("from-corpus authoring boxes are editable after anchoring a passage", async ({
   page,
 }) => {

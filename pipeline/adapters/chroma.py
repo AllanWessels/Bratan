@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import shutil
+import subprocess
+import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -19,11 +23,20 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
+# Env var that, when set truthy, makes every ChromaAdapter route its READ
+# operations (vector_query, count, health_check) through a fresh subprocess.
+# This is how the long-running uvicorn process avoids holding poisoned
+# chromadb client state across resets. See `scripts/query_worker.py`.
+_SUBPROCESS_QUERY_ENV = "BRATAN_CHROMA_SUBPROCESS_QUERY"
+
 # Markers in chromadb error strings that mean "the on-disk schema is gone or
 # unreadable" — recoverable by nuking the path and reconnecting. Anything else
 # we let propagate.
 _RECOVERABLE_MARKERS = (
     "no such table",
+    "no such table: databases",  # newly observed variant; "no such table" alone
+                                  # catches it, but listing it explicitly makes
+                                  # the marker set greppable for future debug.
     "database disk image is malformed",
     "file is not a database",
     "DatabaseError",
@@ -40,6 +53,108 @@ _RECOVERABLE_MARKERS = (
 )
 
 
+def _truthy(value: str | None) -> bool:
+    if not value:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+# Repo root computed from this file's location: chroma.py lives at
+# pipeline/adapters/chroma.py so parents[2] is the project root. Tests that
+# instantiate ChromaAdapter against this path (e.g. via BratanConfig()'s
+# default `./.chroma`) would poison the real on-disk store the live UI
+# reads from. The pytest-time guard below refuses that combination.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_PROJECT_DEFAULT_CHROMA_PATH = (_REPO_ROOT / ".chroma").resolve()
+
+
+def _refuse_project_default_under_pytest(path: Path) -> None:
+    """Belt-and-braces: refuse to open ./.chroma under pytest.
+
+    The StubEmbedder used in tests produces 32-dim vectors; if any of those
+    landed in the real on-disk store, the next live BGE-small call (384-dim)
+    would 500 with "Collection expecting embedding with dimension of 32".
+    Tests should always pass an explicit tmp_path-based ``chroma_path``;
+    if they don't, fail loud here rather than silently corrupting state
+    across sessions.
+    """
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        return
+    try:
+        resolved = path.expanduser().resolve()
+    except OSError:
+        # Path doesn't exist yet — that's fine for the comparison; resolve
+        # against the parent so a planned `.chroma` location still matches.
+        resolved = (Path.cwd() / path).resolve()
+    if resolved == _PROJECT_DEFAULT_CHROMA_PATH:
+        test_name = os.environ.get("PYTEST_CURRENT_TEST", "<unknown>")
+        raise RuntimeError(
+            f"ChromaAdapter must use a tmp path during pytest. "
+            f"Got the project-default path {resolved}, which would poison "
+            f"the real on-disk store. Test: {test_name}. "
+            f"Pass an explicit chroma_path=tmp_path/'chroma' (or set "
+            f"cfg.vector_db.chroma_path to a tmp location)."
+        )
+
+
+# Process-wide registry of live ChromaAdapter instances. Used by
+# `drop_in_process_clients()` so the reset endpoint can null out every
+# retained adapter handle, not just the most recently-constructed one.
+# Stored as a plain set (not WeakSet) because chromadb's Rust-backed
+# PersistentClient is the resource we care about pinning, and we want
+# explicit lifecycle: ChromaAdapter.__init__ adds, drop_in_process_clients
+# removes.
+_LIVE_ADAPTERS: set[ChromaAdapter] = set()
+
+
+def drop_in_process_clients() -> bool:
+    """Wipe every in-process chromadb client + collection reference.
+
+    Called by `POST /api/system/reset-vector-store` *after* the on-disk
+    ``.chroma/`` path has been removed. Without this step, a subsequent
+    adapter construction in the same Python process reuses chromadb's
+    cached ``SharedSystemClient`` (which holds a sqlite handle pointing
+    at the now-deleted directory) and raises
+    "unable to open database file".
+
+    Sequence:
+      1. Walk every live ChromaAdapter, null its client + collection refs.
+      2. Clear chromadb's process-wide ``SharedSystemClient`` cache.
+
+    Returns True if any state was actually cleared, False if nothing was
+    held (purely informational — callers shouldn't branch on it).
+    """
+    cleared_any = False
+    for adapter in list(_LIVE_ADAPTERS):
+        try:
+            adapter._collection = None
+            if adapter._client is not None:
+                # NOTE: do NOT call `adapter._client.reset()` here. reset() is
+                # destructive — it wipes every collection on disk. The reset
+                # endpoint removes `.chroma/` from disk BEFORE calling this
+                # function, so it didn't notice; but anyone else calling
+                # drop_in_process_clients() (tests that ingest, then want a
+                # fresh subprocess-mode read; future "rotate the client"
+                # callers) would silently lose their data. Drop the ref only.
+                adapter._client = None
+                cleared_any = True
+        finally:
+            _LIVE_ADAPTERS.discard(adapter)
+
+    # Even if no adapter is currently registered, chromadb's own process-wide
+    # cache may still hold a handle to the wiped path. Clear it.
+    try:
+        from chromadb.api.shared_system_client import SharedSystemClient
+
+        if getattr(SharedSystemClient, "_identifier_to_system", None):
+            cleared_any = True
+        SharedSystemClient.clear_system_cache()
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.debug("clear_system_cache() raised: %s", exc)
+
+    return cleared_any
+
+
 class ChromaAdapter(VectorDBAdapter):
     """Persistent ChromaDB-backed adapter.
 
@@ -52,12 +167,42 @@ class ChromaAdapter(VectorDBAdapter):
     in-memory client against a path that no longer exists.
     """
 
-    def __init__(self, path: str | Path, collection: str = "corpus") -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        collection: str = "corpus",
+        *,
+        subprocess_query: bool | None = None,
+        **_: Any,
+    ) -> None:
         self._path = Path(path)
+        _refuse_project_default_under_pytest(self._path)
         self._path.mkdir(parents=True, exist_ok=True)
         self._collection_name = collection
         self._client: chromadb.PersistentClient | None = None
         self._collection: Any = None
+        # Read-path isolation: when on, vector_query / count / health_check
+        # spawn `scripts.query_worker` instead of touching the in-process
+        # chromadb client. The flag is opt-in (kwarg) with env-var fallback so
+        # production (uvicorn) flips it on at startup and unit tests keep the
+        # fast in-process path by default.
+        if subprocess_query is None:
+            subprocess_query = _truthy(os.environ.get(_SUBPROCESS_QUERY_ENV))
+        self._subprocess_query = bool(subprocess_query)
+
+        if self._subprocess_query:
+            # Deliberately do NOT call `_connect()` — opening the persistent
+            # client here would re-poison the parent process, which is the
+            # whole problem this flag exists to dodge. The subprocess opens
+            # its own fresh client per call.
+            logger.info(
+                "ChromaAdapter at %s: read path routed to %s subprocess",
+                self._path,
+                "scripts.query_worker",
+            )
+            _LIVE_ADAPTERS.add(self)
+            return
+
         # __init__ MUST also recover — the user's "no such table: tenants" hit
         # on first get_or_create_collection. Wrapping connect itself.
         try:
@@ -68,6 +213,7 @@ class ChromaAdapter(VectorDBAdapter):
                 raise
             logger.warning("Recovering from chromadb init error: %s", exc)
             self._recover()
+        _LIVE_ADAPTERS.add(self)
 
     def _connect(self) -> None:
         self._path.mkdir(parents=True, exist_ok=True)
@@ -122,9 +268,111 @@ class ChromaAdapter(VectorDBAdapter):
             self._recover()
             return op()
 
+    # ------------------------------------------------------------------
+    # Subprocess read path
+    # ------------------------------------------------------------------
+
+    def _project_root(self) -> Path:
+        """Repo root where `scripts/` lives — always derived from __file__.
+
+        Intentionally NOT `BRATAN_PROJECT_ROOT`: that env var is a *data*
+        path (where `bratan.config.yaml` and `.chroma/` live), which the
+        wizard and tests set to a per-project tmpdir. The worker is a
+        *code* module that must be importable as `scripts.query_worker`,
+        and that import resolves only from the actual repo root. Under
+        pytest the two diverge — honoring BRATAN_PROJECT_ROOT here points
+        cwd at a tmpdir with no `scripts/`, and `python -m
+        scripts.query_worker` exits with ModuleNotFoundError.
+        """
+        return Path(__file__).resolve().parents[2]
+
+    def _subprocess_call(self, op: str, **payload: Any) -> dict[str, Any]:
+        """Run one query op in `scripts.query_worker` and parse its JSON reply.
+
+        We pass ``chroma_path`` + ``chroma_collection`` directly (Form B in
+        the worker's docstring) so the adapter doesn't need a BratanConfig
+        in hand. The child process always opens chromadb fresh — that's the
+        whole point of this routing layer.
+        """
+        request = {
+            "op": op,
+            "chroma_path": str(self._path),
+            "chroma_collection": self._collection_name,
+            **payload,
+        }
+        # Strip our own env flag from the child so we never recurse. The
+        # worker scrubs it again as belt-and-braces.
+        child_env = {k: v for k, v in os.environ.items() if k != _SUBPROCESS_QUERY_ENV}
+        # Prepend project_root to PYTHONPATH so `python -m scripts.query_worker`
+        # resolves regardless of how the parent was launched. Under uvicorn
+        # PYTHONPATH is set at startup and cwd alone happens to suffice; under
+        # pytest neither is reliably true and the child exits with
+        # ModuleNotFoundError. Belt-and-suspenders: set cwd AND PYTHONPATH so
+        # both spawn paths work without depending on caller-supplied env.
+        project_root = self._project_root()
+        existing_pythonpath = child_env.get("PYTHONPATH", "")
+        child_env["PYTHONPATH"] = (
+            str(project_root) + (os.pathsep + existing_pythonpath if existing_pythonpath else "")
+        )
+
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-m", "scripts.query_worker"],
+                input=json.dumps(request),
+                capture_output=True,
+                text=True,
+                cwd=str(project_root),
+                env=child_env,
+                # Reads should be quick; cap at 60s so a wedged worker can't
+                # hang the request indefinitely.
+                timeout=60.0,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"chroma query worker timed out after {exc.timeout}s "
+                f"(op={op!r}, path={self._path})"
+            ) from exc
+        except Exception as exc:
+            raise RuntimeError(
+                f"failed to spawn chroma query worker (op={op!r}): {exc}"
+            ) from exc
+
+        stdout = (proc.stdout or "").strip()
+        if not stdout:
+            stderr = (proc.stderr or "").strip()
+            raise RuntimeError(
+                f"chroma query worker produced no output "
+                f"(op={op!r}, exit={proc.returncode}, stderr={stderr!r})"
+            )
+        try:
+            payload_out = json.loads(stdout)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"chroma query worker emitted non-JSON output: {stdout!r}"
+            ) from exc
+
+        if not payload_out.get("ok"):
+            err = payload_out.get("error", "unknown subprocess error")
+            raise RuntimeError(f"chroma query worker {op!r} failed: {err}")
+        return payload_out
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
     def upsert(self, items: list[ChunkRecord]) -> None:
         if not items:
             return
+        if self._subprocess_query:
+            # Writes belong to scripts.ingest_worker (a different short-lived
+            # process). The uvicorn-side adapter should never reach this; if
+            # it does, fail loudly rather than silently re-opening chromadb
+            # and re-introducing the poisoning we just engineered around.
+            raise RuntimeError(
+                "ChromaAdapter is in subprocess_query mode; writes must go "
+                "through scripts.ingest_worker, not the live FastAPI process."
+            )
         ids = [it.id for it in items]
         embeddings = [it.embedding for it in items]
         documents = [it.text for it in items]
@@ -139,6 +387,17 @@ class ChromaAdapter(VectorDBAdapter):
         )
 
     def vector_query(self, embedding: list[float], k: int) -> list[QueryHit]:
+        if self._subprocess_query:
+            result = self._subprocess_call("vector_query", embedding=embedding, k=int(k))
+            return [
+                QueryHit(
+                    id=h["id"],
+                    text=h.get("text", ""),
+                    score=float(h.get("score", 0.0)),
+                    metadata=h.get("metadata", {}) or {},
+                )
+                for h in result.get("hits", [])
+            ]
         try:
             result = self._with_recovery(
                 lambda: self._collection.query(
@@ -162,20 +421,57 @@ class ChromaAdapter(VectorDBAdapter):
         # ChromaDB has no native BM25 — caller stitches hybrid retrieval itself.
         return None
 
+    def count_chunks_by_path(self) -> dict[str, int]:
+        """Tally chunks per source-path metadata.
+
+        Powers the corpus-list `ingested` / `n_chunks` flags. Must go through
+        subprocess in the long-running uvicorn or it reads stale in-memory
+        state and reports every file as `ingested: false` even after a
+        successful ingest — the 2026-05-24 user-reported bug.
+        """
+        if self._subprocess_query:
+            result = self._subprocess_call("count_by_path")
+            counts = result.get("counts", {}) or {}
+            return {k: int(v) for k, v in counts.items()}
+        try:
+            data = self._with_recovery(
+                lambda: self._collection.get(include=["metadatas"])
+            )
+        except Exception as exc:
+            logger.debug("count_chunks_by_path raised: %s", exc)
+            return {}
+        counts: dict[str, int] = {}
+        for meta in data.get("metadatas", []) or []:
+            if not meta:
+                continue
+            path = meta.get("path")
+            if isinstance(path, str):
+                counts[path] = counts.get(path, 0) + 1
+        return counts
+
     def delete(self, ids: list[str]) -> None:
         if not ids:
             return
+        if self._subprocess_query:
+            raise RuntimeError(
+                "ChromaAdapter is in subprocess_query mode; deletes must go "
+                "through scripts.ingest_worker, not the live FastAPI process."
+            )
         self._with_recovery(lambda: self._collection.delete(ids=ids))
 
     def count(self) -> int:
+        if self._subprocess_query:
+            result = self._subprocess_call("count")
+            return int(result.get("count", 0))
         return int(self._with_recovery(lambda: self._collection.count()))
 
     def health_check(self) -> ConnectionTest:
         t0 = time.perf_counter()
         try:
-            # Use self.count() so we go through _with_recovery — bypassing it
-            # is what made the "Test connection" button surface the raw
-            # "no such table: tenants" error to the user.
+            # Use self.count() so we go through _with_recovery (or the
+            # subprocess) — bypassing it is what made the "Test connection"
+            # button surface the raw "no such table: tenants" error to the
+            # user.
             n = self.count()
             latency_ms = (time.perf_counter() - t0) * 1000.0
             return ConnectionTest(
@@ -185,6 +481,7 @@ class ChromaAdapter(VectorDBAdapter):
                     "collection": self._collection_name,
                     "path": str(self._path),
                     "count": n,
+                    "subprocess_query": self._subprocess_query,
                 },
             )
         except Exception as exc:

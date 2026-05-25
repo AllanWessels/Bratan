@@ -1,8 +1,31 @@
-# Resume Here — Project State (last touched 2026-05-23, 18:50 PT)
+# Resume Here — Project State (last touched 2026-05-24)
 
-All six milestones from the approved plan have landed. The framework is
-feature-complete pending the live end-to-end run against a real
-Anthropic key (which requires the user to author seed cases first).
+All six milestones from the approved plan have landed. Since the M5
+sign-off, three rounds of UX bug-stomp + structural fixes have shipped
+(subprocess-isolated chroma queries, reset-vector-store endpoint, the
+fan-out / fix-first / verify-clean / verifier-state-≠-user-state
+operating principles in `CLAUDE.md`). Outstanding: a live end-to-end
+loop run with a real Anthropic key against a user-authored seed set.
+
+## Recent work (2026-05-24)
+
+- **Chroma state poisoning structural fix** (`d9d1e8a`): query path now
+  runs in a subprocess (`scripts/query_worker.py`), so the "no such
+  table: tenants/databases", "Nothing found on disk", and dim-mismatch
+  errors stop crossing from verifier runs into user sessions.
+- **Reset endpoint** (`6cf4fb4`): `POST /api/system/reset-vector-store`
+  with type-RESET confirm modal exposed on setup Step 2 and the Run
+  dashboard. Recovers a poisoned vector store without bouncing uvicorn.
+- **Operating principles in CLAUDE.md** (`922a75a`, `389992d`,
+  `4a0592e`, `bc564fc`): VERIFY CLEAN STATE, FIX FIRST THEN TEST, FAN
+  OUT ALWAYS, VERIFIER STATE ≠ USER STATE — all hard-won, all enforced
+  by the pre-handoff checklist (11 items, see CLAUDE.md).
+- **CI green** (`aedb49c`, `bb9c40d`): all ruff failures cleared;
+  `tests/_worker_stubs/*` excluded from lint (intentional structure).
+- **Playwright unhappy-path coverage** (`3825ccd`): first of three
+  real-backend specs landed (`uningested-corpus.spec.ts`). Two more
+  (`corpus-search-graceful`, `full-author-flow`) are queued; helper
+  module already in place.
 
 ## Milestone accounting (against the approved plan)
 
@@ -13,13 +36,12 @@ Anthropic key (which requires the user to author seed cases first).
 | **M2 — smoke loop + live dashboard** | ✅ Done | judge + metrics + stop_criteria + eval + loop + agent_runner, plus the live `/run` dashboard with WebSocket stream |
 | **M3 — cost & reliability controls** | ✅ Done | `pipeline/cache.py`, `pipeline/budget.py`, `judge.drift_check()`, `scripts/eval.py --subset N`, `--drift-check` |
 | **M4 — optimization-method skills** | ✅ Done | Four `SKILL.md` files (ablation / grid-sweep / bayesian-optimization / particle-swarm) + `scripts/sweep.py` shared runner with grid / ablation / bayesian strategies and oracle-validation of winners |
-| **M5 — polish + extra adapters + CI** | ✅ Done | Functional Qdrant adapter (in-memory hermetic tests), `.github/workflows/ci.yml`, `docs/metrics.md` (467-line prose), the "portfolio → closed-loop" language sweep, dashboard polish (M5 nice-to-have left: Pinecone/Weaviate/pgvector adapters; chart drill-down). |
+| **M5 — polish + extra adapters + CI** | ✅ Done | All five adapters (Chroma/Qdrant/Pinecone/Weaviate/pgvector) functional with hermetic or recording-mock tests, `.github/workflows/ci.yml`, `docs/metrics.md` (467 lines). |
 
-**Test suite:** 140 backend (1 GPU-skipped) + 38 frontend unit + 2 Playwright
-E2E = **180 tests**. `make test` runs all three layers (E2E adds ~30s
-locally, ~3min on a cold CI runner including browser install).
-`.github/workflows/ci.yml` gates PRs and uploads the Playwright HTML report
-on failure.
+**Test suite:** 232 backend pytest + 398 frontend vitest + 12 Playwright
+E2E = **642 tests** (counts include the new uningested-corpus spec).
+`make test` runs all three layers; `.github/workflows/ci.yml` gates PRs
+and uploads the Playwright HTML report on failure.
 
 ## The only thing not yet exercised
 
@@ -136,6 +158,37 @@ The pattern that works:
 This is why the "no such table: tenants" + stale Sonnet model id bugs
 slipped — they shipped without an end-to-end exercise against the live
 backend. The verifier pattern catches that class of bug.
+
+## Common state-poisoning failures
+
+ChromaDB holds in-process singleton state. Wiping `.chroma/` on disk does
+**not** clear the in-memory client. Verifier agents run Playwright with
+`reuseExistingServer: true` and share the user's dev backend — so any
+in-memory poisoning from a verifier cycle flows straight into the user's
+next session.
+
+**Symptom catalogue — all the same root cause (stale chromadb client
+surviving a disk wipe):**
+
+- `OperationalError: no such table: tenants`
+- `OperationalError: no such table: databases`
+- `Nothing found on disk` (chroma persistence path mismatch)
+- `dim mismatch` (collection was created against a different embedding
+  model than the live config now points at)
+
+**Recovery recipe** (run in order, do not skip steps):
+
+1. `curl -sf -X POST http://localhost:8005/api/system/reset-vector-store`
+   — clears the in-memory client where the backend supports it.
+2. `pkill -9 -f "uvicorn.*ui.backend.app"` — kill the FastAPI process so
+   any surviving chromadb singleton is gone.
+3. `rm -rf .chroma bratan.config.yaml .bratan-setup.json` — disk wipe.
+4. Restart uvicorn fresh.
+5. `curl -sf http://localhost:8005/api/corpus/search -d '{"query":"x","k":1}' -H "Content-Type: application/json"`
+   — must return HTTP 200 (not 500), even against an empty corpus.
+
+If step 5 returns 500, GOTO step 2. The "reset endpoint" alone is not
+sufficient — process-level restart is the only reliable fix.
 
 ## Decisions worth re-reading before changing things
 

@@ -14,6 +14,7 @@ import type { IterationReport, ReportSummary, StopReason } from "@/api/types";
 import { Card } from "@/components/Card";
 import { Button } from "@/components/Button";
 import { Field, TextInput } from "@/components/Field";
+import { ResetVectorStoreButton } from "@/components/ResetVectorStoreButton";
 import { Spinner } from "@/components/Spinner";
 import { formatPercent, formatUSD, prettyFailureCategory } from "@/lib/format";
 import { cn } from "@/lib/cn";
@@ -42,6 +43,7 @@ export function Run() {
   const budgetUSD = cfg.data?.cost.usd_per_run ?? null;
   const stopReason = stream.lastStopReason ?? (current?.stop_reason ?? null);
   const running = status.data?.running ?? false;
+  const adapter = cfg.data?.vector_db?.adapter ?? null;
 
   const handlePointClick = (timestamp: string) => {
     navigate(`/run/reports/${encodeURIComponent(timestamp)}`);
@@ -115,7 +117,7 @@ export function Run() {
           <RegressionList current={current} />
         </Card>
 
-        <RunControls running={running} />
+        <RunControls running={running} adapter={adapter} />
       </main>
     </div>
   );
@@ -804,7 +806,13 @@ function RegressionList({ current }: { current: IterationReport | null }) {
 // Run controls
 // ---------------------------------------------------------------------------
 
-function RunControls({ running }: { running: boolean }) {
+function RunControls({
+  running,
+  adapter,
+}: {
+  running: boolean;
+  adapter: string | null;
+}) {
   const [iterations, setIterations] = useState(1);
   const [budgetUSD, setBudgetUSD] = useState<string>("");
   const [skipRed, setSkipRed] = useState(false);
@@ -889,6 +897,31 @@ function RunControls({ running }: { running: boolean }) {
       </div>
       {start.isError && (
         <p className="mt-3 text-sm text-red-600">{(start.error as Error).message}</p>
+      )}
+      {/* Danger zone — wiping the vector store is destructive but sometimes the
+          only way to recover from chroma poisoning mid-loop. Only meaningful
+          for the chroma adapter; managed stores have their own lifecycle. The
+          button is greyed out while a loop is running so it can't be triggered
+          from under an active ingest. */}
+      {adapter === "chroma" && (
+        <div className="mt-5 flex items-start justify-between gap-3 border-t border-slate-100 pt-4">
+          <div>
+            <p className="text-sm font-medium text-slate-800">Reset vector store</p>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Wipes the configured{" "}
+              <code className="rounded bg-slate-100 px-1">.chroma/</code> directory
+              and drops the backend's in-process client. Use this to recover from
+              a poisoned store without restarting the server.
+            </p>
+          </div>
+          <div
+            aria-disabled={running}
+            title={running ? "Stop the loop before resetting the vector store" : undefined}
+            className={cn(running && "pointer-events-none opacity-50")}
+          >
+            <ResetVectorStoreButton size="sm" />
+          </div>
+        </div>
       )}
     </Card>
   );

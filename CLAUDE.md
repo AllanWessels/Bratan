@@ -26,6 +26,10 @@ red-team / blue-team / judge agent loop, with techniques captured as skills.
 >     The user has been bitten by stale Vite modules; if served bytes
 >     differ from disk, restart Vite: `pkill -f "node.*vite"; npm run dev
 >     -- --port 5173 --host 127.0.0.1 &`.
+> 11. Chroma query round-trip: `curl -sf POST /api/corpus/search` with a
+>     one-token query must return HTTP 200, not 500. Repeats after
+>     pkill+restart. This catches stale in-memory clients that disk wipes
+>     don't clear.
 >
 > If ANY check fails, fix it before handing off. Saying "I think the state
 > is clean" is exactly the failure mode this rule exists to prevent.
@@ -76,6 +80,25 @@ red-team / blue-team / judge agent loop, with techniques captured as skills.
 >
 > If you find yourself running ONE thing at a time, you are doing it wrong.
 > Ask: "what could be running alongside this RIGHT NOW?" and dispatch it.
+
+> ## ⚡ VERIFIER STATE ≠ USER STATE
+>
+> The verifier resets state for its own run cycle. The user does not. When
+> verifier and user share the same uvicorn process, every bit of in-memory
+> state poisoning the verifier creates flows straight to the user's next
+> session — and "passing tests" mean nothing.
+>
+> **End every verifier run with these steps, in order:**
+> 1. `rm -rf .chroma bratan.config.yaml` — disk wipe
+> 2. `pkill -9 -f "uvicorn.*ui.backend.app"` — kill the FastAPI process so
+>    no chromadb in-memory client survives
+> 3. Restart uvicorn fresh
+> 4. `curl -sf http://localhost:8005/api/corpus/search -d '{"query":"x","k":1}' -H "Content-Type: application/json"` — round-trip must return 200 (not 500), even with empty corpus
+>
+> Do not hand back control to the user until step 4 returns 200. The
+> "no such table: tenants/databases" and "Nothing found on disk" errors
+> are all the same root cause: a stale chromadb client surviving a disk
+> wipe. The only reliable fix is process-level restart.
 
 ## What this project is
 
@@ -153,16 +176,7 @@ pyproject.toml                  uv-managed Python project
    why, not what. The agents read each other's commit messages as signal.
 5. **Never modify `/corpus/` or `/test_cases/seed.jsonl`.** These are the
    anchor. If those move, regression detection becomes meaningless.
-6. **Fan out everywhere it's possible.** Any task that can be split into
-   independent sub-tasks SHOULD be — dispatch sub-agents via the Agent tool
-   with `run_in_background: true`, then continue with other work and wait
-   for completion notifications. This applies to test runs (pytest +
-   vitest + Playwright + live integration in parallel), to multi-component
-   refactors (frontend + backend + tests in parallel agents with a shared
-   contract), and to verification cycles (one agent per check). The main
-   conversation context is finite and fills with log spam fast; the project
-   has been bitten by "I'll just do this in-line" multiple times. Default to
-   parallel; serial is the exception that needs justification.
+6. **Fan out.** See the FAN OUT OPERATING PRINCIPLE at the top of this file.
 
 ## Run the loop
 
@@ -182,10 +196,15 @@ threshold across 5 consecutive iterations.
 - LLM for agents: Claude Sonnet 4 (model id `claude-sonnet-4-6`)
 - LLM for judge: Claude Sonnet 4 (DO NOT downgrade — judge reliability
   is the load-bearing assumption of the whole loop)
-- Embedding model: Voyage `voyage-3` (configurable in `/pipeline/config.yaml`)
-- Vector store: ChromaDB (local, no external service)
-- Reranker: `cohere/rerank-3.5` by default (configurable)
+- Embedding model: `BAAI/bge-small-en-v1.5` (local, GPU if available;
+  configurable in the setup wizard)
+- Reranker: `BAAI/bge-reranker-v2-m3` (local; configurable)
+- Pre-judge: `Qwen/Qwen2.5-7B-Instruct-AWQ` via local vLLM (configurable)
+- Vector store: ChromaDB (local, no external service); Qdrant/Pinecone/
+  Weaviate/pgvector adapters also ship
 - Test set: starts at ~50 cases in `seed.jsonl`; grows from there
+- Source of truth for these defaults is `ui/backend/schemas.py::ModelConfig`,
+  not this list — if they ever diverge, the schema wins.
 
 ## The non-negotiable invariants
 

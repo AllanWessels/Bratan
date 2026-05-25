@@ -2,8 +2,47 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { BratanConfig } from "@/api/types";
 
 import { Step3Models } from "./Step3Models";
+
+function makeConfig(useLocalPrejudge: boolean): BratanConfig {
+  return {
+    project: { project_name: "bratan", corpus_path: "./corpus", seed_target_n: 50 },
+    vector_db: {
+      adapter: "chroma",
+      chroma_path: "./.chroma",
+      chroma_collection: "corpus",
+    },
+    models: {
+      anthropic_api_key: "",
+      oracle_model: "claude-sonnet-4-6",
+      vllm_base_url: "http://localhost:8001",
+      prejudge_model: "Qwen/Qwen2.5-7B-Instruct-AWQ",
+      embedding_model: "BAAI/bge-small-en-v1.5",
+      reranker_model: "BAAI/bge-reranker-v2-m3",
+      use_local_embedding: true,
+      use_local_reranker: true,
+      use_local_prejudge: useLocalPrejudge,
+    },
+    cost: {
+      usd_per_run: 5,
+      tokens_per_iteration: 2_000_000,
+      cache_ttl_hours: 168,
+      subset_eval_size: 10,
+    },
+    stop: {
+      convergence_threshold: 0.02,
+      convergence_window: 5,
+      max_iterations: 50,
+      anchor_regression_threshold: 0.3,
+      regression_policy: "warn",
+    },
+    judge_weights: { correctness: 0.4, recall_at_5: 0.3, faithfulness: 0.3 },
+    setup_completed: false,
+    setup_completed_at: null,
+  };
+}
 
 const originalFetch = globalThis.fetch;
 let captured: Array<{ url: string; body: Record<string, unknown> | null }> = [];
@@ -313,6 +352,28 @@ describe("Step3Models", () => {
     // First match (top of DOM) should be "Get vLLM running"
     expect(cards[0].textContent).toMatch(/Get vLLM running/i);
     expect(cards[1].textContent).toMatch(/Local vLLM endpoint/i);
+  });
+
+  // ---- Audit row 5: vLLM card hides on use_local_prejudge=false (config path) ----
+  //
+  // The existing "auto-start sub-card renders only when Local pre-judge is ON"
+  // test drives the toggle CLICK to flip the card. These two tests cover the
+  // controlled-prop / initial-render path: when the wizard mounts Step3Models
+  // with config.use_local_prejudge=false, the GetVLLMRunningCard should be
+  // absent from the start — not just hidden after a click.
+
+  it("does NOT render the GetVLLMRunningCard when config.use_local_prejudge=false on mount", () => {
+    render(withProviders(<Step3Models config={makeConfig(false)} />));
+    expect(screen.queryByTestId("get-vllm-running")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("vllm-autostart-panel")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("vllm-manual-panel")).not.toBeInTheDocument();
+  });
+
+  it("renders the GetVLLMRunningCard when config.use_local_prejudge=true on mount", () => {
+    render(withProviders(<Step3Models config={makeConfig(true)} />));
+    expect(screen.getByTestId("get-vllm-running")).toBeInTheDocument();
+    expect(screen.getByTestId("vllm-autostart-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("vllm-manual-panel")).toBeInTheDocument();
   });
 
   it("renders the 'not installed' hint when the start endpoint returns vllm_not_installed", async () => {

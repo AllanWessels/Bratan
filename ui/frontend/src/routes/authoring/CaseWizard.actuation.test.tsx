@@ -165,7 +165,28 @@ describe("CaseWizard actuation — every input", () => {
     expect(screen.getByRole("button", { name: /save case/i })).toBeDisabled();
   });
 
-  it("Save case becomes enabled once validation passes AND a category is chosen", async () => {
+  it("Save case becomes enabled with question + answer + passage + category", async () => {
+    // Post-5ba5d55: canSave gates on required-field presence only — fill
+    // the full set (question, ground_truth, ≥1 passage, category).
+    mocks.useCorpusSearch.mockReturnValue({
+      mutate: vi.fn(),
+      data: {
+        passages: [
+          {
+            path: "doc.md",
+            line_start: 1,
+            line_end: 5,
+            content: "Sample.",
+            score: 0.9,
+          },
+        ],
+        embedding_model: "stub",
+        latency_ms: 1,
+      },
+      isPending: false,
+      isError: false,
+      error: null,
+    });
     mocks.useSeedValidate.mockReturnValue({
       mutate: vi.fn(),
       reset: vi.fn(),
@@ -176,8 +197,17 @@ describe("CaseWizard actuation — every input", () => {
     });
     const user = userEvent.setup();
     render(withProviders(<CaseWizard />));
+    await user.type(screen.getByLabelText(/^question/i), "What is X?");
+    await user.type(screen.getByLabelText(/ground-truth answer/i), "X is Y.");
+    await waitFor(
+      () =>
+        expect(
+          screen.getByLabelText(/add passage to case/i),
+        ).toBeInTheDocument(),
+      { timeout: 1500 },
+    );
+    await user.click(screen.getByLabelText(/add passage to case/i));
     const cat = screen.getByLabelText(/failure category/i) as HTMLSelectElement;
-    // Pick the first non-empty option.
     const firstCat = Array.from(cat.options).find((o) => o.value !== "");
     expect(firstCat).toBeTruthy();
     await user.selectOptions(cat, firstCat!.value);
@@ -185,6 +215,25 @@ describe("CaseWizard actuation — every input", () => {
   });
 
   it("Save case sends the typed question, ground_truth, and notes in the payload", async () => {
+    mocks.useCorpusSearch.mockReturnValue({
+      mutate: vi.fn(),
+      data: {
+        passages: [
+          {
+            path: "doc.md",
+            line_start: 1,
+            line_end: 5,
+            content: "Sample.",
+            score: 0.9,
+          },
+        ],
+        embedding_model: "stub",
+        latency_ms: 1,
+      },
+      isPending: false,
+      isError: false,
+      error: null,
+    });
     const saveAsync = vi.fn().mockResolvedValue(saveResp());
     mocks.useSeedSave.mockReturnValue({
       mutate: vi.fn(),
@@ -201,9 +250,19 @@ describe("CaseWizard actuation — every input", () => {
     });
     const user = userEvent.setup();
     render(withProviders(<CaseWizard />));
+    // Need ≥3 chars in question for the picker to render hits (PassagePicker
+    // gate). "Q1?" is only 3 chars but trim().length is 3 so it renders.
     await user.type(screen.getByLabelText(/^question/i), "Q1?");
     await user.type(screen.getByLabelText(/ground-truth answer/i), "A1.");
     await user.type(screen.getByLabelText(/^notes/i), "Note-1");
+    await waitFor(
+      () =>
+        expect(
+          screen.getByLabelText(/add passage to case/i),
+        ).toBeInTheDocument(),
+      { timeout: 1500 },
+    );
+    await user.click(screen.getByLabelText(/add passage to case/i));
     const cat = screen.getByLabelText(/failure category/i) as HTMLSelectElement;
     const firstCat = Array.from(cat.options).find((o) => o.value !== "");
     await user.selectOptions(cat, firstCat!.value);

@@ -409,3 +409,17 @@ class VLLMStatus(BaseModel):
 class VLLMStopResponse(BaseModel):
     ok: bool
     was_running: bool
+
+
+class SystemResetResponse(BaseModel):
+    """Result of POST /api/system/reset-vector-store.
+
+    Encodes both halves of the reset — wiping the on-disk path AND dropping
+    in-process chromadb client/collection refs — so the caller can tell which
+    half happened. `path_wiped` is ``None`` when the configured `.chroma/`
+    didn't exist (no-op on disk) but the in-process refs were still dropped.
+    """
+
+    ok: bool
+    path_wiped: str | None = None
+    client_dropped: bool

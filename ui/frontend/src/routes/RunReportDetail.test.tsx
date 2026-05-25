@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   useLoopStream: vi.fn(),
   useStartLoop: vi.fn(),
   useStopLoop: vi.fn(),
+  useResetVectorStore: vi.fn(),
+  useIngestStatus: vi.fn(),
 }));
 
 vi.mock("@/api/hooks", () => mocks);
@@ -141,6 +143,26 @@ beforeEach(() => {
     isPending: false,
     isError: false,
     error: null,
+  });
+  mocks.useResetVectorStore.mockReturnValue({
+    mutate: vi.fn(),
+    mutateAsync: vi.fn(),
+    reset: vi.fn(),
+    data: null,
+    isPending: false,
+    isError: false,
+    error: null,
+  });
+  mocks.useIngestStatus.mockReturnValue({
+    data: {
+      state: "idle",
+      task_id: null,
+      files_total: 0,
+      files_done: 0,
+      chunks_written: 0,
+      error: null,
+    },
+    isLoading: false,
   });
 });
 

@@ -34,6 +34,7 @@ import type {
   SeedValidateResponse,
   SetupState,
   StopReason,
+  SystemResetResponse,
   TestAnthropicRequest,
   TestVectorDBRequest,
   TestVLLMRequest,
@@ -356,6 +357,31 @@ export function useStopVLLM() {
     mutationFn: () =>
       request<VLLMStopResponse>("/api/system/vllm/stop", { method: "POST" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["vllm-status"] }),
+  });
+}
+
+// ---------- Vector-store reset (destructive) ----------
+
+/**
+ * Wipe `.chroma/` + drop in-process chroma client refs.
+ *
+ * Guarded server-side: the request body must include `{ confirm: true }`.
+ * The UI gate (Type RESET to confirm) is in `ResetVectorStoreButton`;
+ * this hook just forwards the confirmed call.
+ */
+export function useResetVectorStore() {
+  const qc = useQueryClient();
+  return useMutation<SystemResetResponse, Error, void>({
+    mutationFn: () =>
+      request<SystemResetResponse>("/api/system/reset-vector-store", {
+        method: "POST",
+        body: { confirm: true },
+      }),
+    onSuccess: () => {
+      // Anything cached that depends on the vector store is now stale.
+      qc.invalidateQueries({ queryKey: ["ingest-status"] });
+      qc.invalidateQueries({ queryKey: ["corpus-files"] });
+    },
   });
 }
 
