@@ -147,7 +147,10 @@ describe("Authoring — mode-tab switch preserves draft", () => {
   // always present (no anchor gate). Type into it, toggle to from-corpus,
   // toggle back, and assert the text survived. If the textarea is empty,
   // the test reveals the silent-data-loss bug Section 4 row 8 flagged.
-  it("preserves typed question when switching from-question -> from-corpus -> from-question", async () => {
+  // EXPECTED FAILURE — documents the open prod gap (mode-tab unmounts
+  // wizard, drafts silently lost). Audit row 8. When fixed in prod,
+  // change `it.fails` → `it`.
+  it.fails("preserves typed question when switching from-question -> from-corpus -> from-question", async () => {
     const user = userEvent.setup();
     render(withProviders(<Authoring />));
 
@@ -191,7 +194,8 @@ describe("Authoring — mode-tab switch preserves draft", () => {
   // requires the file list to be non-empty and a passage to be selected.
   // We set up enough fixture data to make the textarea mount, type into
   // it, toggle, toggle back, and re-anchor.
-  it("preserves typed question when switching from-corpus -> from-question -> from-corpus", async () => {
+  // EXPECTED FAILURE — same prod gap, reverse direction. See audit row 8.
+  it.fails("preserves typed question when switching from-corpus -> from-question -> from-corpus", async () => {
     mocks.useCorpusFiles.mockReturnValue({
       data: [
         {

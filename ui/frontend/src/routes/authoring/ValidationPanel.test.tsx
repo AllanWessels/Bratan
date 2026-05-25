@@ -74,11 +74,22 @@ describe("ValidationPanel", () => {
         onToggleRunPipeline={vi.fn()}
       />,
     );
-    expect(screen.getByText(/Passages retrievable in top-5/i)).toBeInTheDocument();
-    expect(screen.getByText(/Answer text appears in selected passages/i)).toBeInTheDocument();
-    expect(screen.getByText(/2 of 5/)).toBeInTheDocument();
+    // New ValidationPanel (5ba5d55): retrieval row label changed from
+    // "Passages retrievable in top-5" to "Pipeline retrieves this passage";
+    // verbatim row from "Answer text appears in selected passages" to
+    // "Answer appears verbatim in passages"; data-valid attribute replaced
+    // with data-difficulty enum ("easy" | "hard" | "inference" | "adversarial").
+    expect(screen.getByText(/Pipeline retrieves this passage/i)).toBeInTheDocument();
+    expect(screen.getByText(/Answer appears verbatim in passages/i)).toBeInTheDocument();
+    expect(screen.getByText(/2 of 5 selected passages found/i)).toBeInTheDocument();
     expect(screen.getByText(/Substring match confirmed/i)).toBeInTheDocument();
-    expect(screen.getByTestId("validation-result")).toHaveAttribute("data-valid", "true");
+    expect(screen.getByTestId("validation-result")).toHaveAttribute(
+      "data-difficulty",
+      "easy",
+    );
+    expect(screen.getByTestId("validation-difficulty-badge")).toHaveTextContent(
+      /Easy case/i,
+    );
   });
 
   it("renders X rows for an invalid result", () => {
@@ -92,9 +103,17 @@ describe("ValidationPanel", () => {
         onToggleRunPipeline={vi.fn()}
       />,
     );
-    expect(screen.getByTestId("validation-result")).toHaveAttribute("data-valid", "false");
+    // Both signals fail → adversarial difficulty (hard case worth keeping in
+    // the seed set). New copy is descriptive, not punitive.
+    expect(screen.getByTestId("validation-result")).toHaveAttribute(
+      "data-difficulty",
+      "adversarial",
+    );
+    expect(screen.getByTestId("validation-difficulty-badge")).toHaveTextContent(
+      /Hard case \(adversarial\)/i,
+    );
     expect(
-      screen.getByText(/Answer text not found verbatim/i),
+      screen.getByText(/Not a verbatim match — answer is inferred or paraphrased/i),
     ).toBeInTheDocument();
   });
 

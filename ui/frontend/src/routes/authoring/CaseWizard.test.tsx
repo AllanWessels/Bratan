@@ -36,6 +36,43 @@ function validResult(): SeedValidateResponse {
   };
 }
 
+// Stuff one search hit into useCorpusSearch.data so PassagePicker renders an
+// "Add passage to case" button. Tests then user.click that to populate
+// draft.passages — required by the post-5ba5d55 canSave gate, which now
+// correctly requires ≥1 passage (rather than gating on validate.data
+// indirectly, which fabrication-mocked tests could bypass).
+function seedSearchHit() {
+  mocks.useCorpusSearch.mockReturnValue({
+    mutate: vi.fn(),
+    data: {
+      passages: [
+        {
+          path: "doc.md",
+          line_start: 1,
+          line_end: 5,
+          content: "Some passage content used by Save-case tests.",
+          score: 0.9,
+        },
+      ],
+      embedding_model: "stub",
+      latency_ms: 42,
+    },
+    isPending: false,
+    isError: false,
+    error: null,
+  });
+}
+
+async function addOnePassage(user: ReturnType<typeof userEvent.setup>) {
+  // PassagePicker debounces its query 350ms before rendering hits.
+  await waitFor(
+    () =>
+      expect(screen.getByLabelText(/add passage to case/i)).toBeInTheDocument(),
+    { timeout: 1500 },
+  );
+  await user.click(screen.getByLabelText(/add passage to case/i));
+}
+
 function saveResp(): SeedSaveResponse {
   return {
     ok: true,
@@ -100,7 +137,10 @@ describe("CaseWizard", () => {
     expect(screen.getByRole("button", { name: /save case/i })).toBeDisabled();
   });
 
-  it("Save case is enabled when validation passes and category chosen", async () => {
+  it("Save case is enabled with question + answer + passage + category", async () => {
+    // Post-5ba5d55: canSave gates ONLY on required-field presence (no
+    // validation pass-through). Drive the full required-field set.
+    seedSearchHit();
     mocks.useSeedValidate.mockReturnValue({
       mutate: vi.fn(),
       reset: vi.fn(),
@@ -111,6 +151,9 @@ describe("CaseWizard", () => {
     });
     const user = userEvent.setup();
     render(withProviders(<CaseWizard />));
+    await user.type(screen.getByLabelText(/^question/i), "What is X?");
+    await user.type(screen.getByLabelText(/ground-truth answer/i), "X is Y.");
+    await addOnePassage(user);
     await user.selectOptions(
       screen.getByLabelText(/failure category/i),
       "straightforward",
@@ -119,6 +162,7 @@ describe("CaseWizard", () => {
   });
 
   it("clicking Save calls seedSave.mutateAsync with the wrapped payload", async () => {
+    seedSearchHit();
     const saveAsync = vi.fn().mockResolvedValue(saveResp());
     mocks.useSeedSave.mockReturnValue({
       mutate: vi.fn(),
@@ -137,6 +181,7 @@ describe("CaseWizard", () => {
     render(withProviders(<CaseWizard />));
     await user.type(screen.getByLabelText(/^question/i), "What is X?");
     await user.type(screen.getByLabelText(/ground-truth answer/i), "X is Y.");
+    await addOnePassage(user);
     await user.selectOptions(
       screen.getByLabelText(/failure category/i),
       "straightforward",
@@ -155,6 +200,7 @@ describe("CaseWizard", () => {
   });
 
   it("pushes a success toast and resets the wizard after save", async () => {
+    seedSearchHit();
     const saveAsync = vi.fn().mockResolvedValue(saveResp());
     mocks.useSeedSave.mockReturnValue({
       mutate: vi.fn(),
@@ -173,6 +219,7 @@ describe("CaseWizard", () => {
     render(withProviders(<CaseWizard />));
     await user.type(screen.getByLabelText(/^question/i), "What is X?");
     await user.type(screen.getByLabelText(/ground-truth answer/i), "X is Y.");
+    await addOnePassage(user);
     await user.selectOptions(
       screen.getByLabelText(/failure category/i),
       "straightforward",
@@ -188,6 +235,7 @@ describe("CaseWizard", () => {
   });
 
   it("pushes an error toast on save failure (e.g. 409 duplicate)", async () => {
+    seedSearchHit();
     const saveAsync = vi.fn().mockRejectedValue(new Error("Duplicate question"));
     mocks.useSeedSave.mockReturnValue({
       mutate: vi.fn(),
@@ -206,6 +254,7 @@ describe("CaseWizard", () => {
     render(withProviders(<CaseWizard />));
     await user.type(screen.getByLabelText(/^question/i), "Dup question");
     await user.type(screen.getByLabelText(/ground-truth answer/i), "X is Y.");
+    await addOnePassage(user);
     await user.selectOptions(
       screen.getByLabelText(/failure category/i),
       "straightforward",

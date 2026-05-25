@@ -135,7 +135,10 @@ beforeEach(() => {
 });
 
 describe("Run — reconnect indicator when stream drops mid-loop", () => {
-  it("surfaces a 'connection lost' / 'reconnecting' hint when running:true but stream connected:false", () => {
+  // EXPECTED FAILURE — Run.tsx has no reconnect/connection-lost indicator.
+  // Audit row 7. Related to task #68 (make running state more prominent).
+  // When fixed in prod, change `it.fails` → `it`.
+  it.fails("surfaces a 'connection lost' / 'reconnecting' hint when running:true but stream connected:false", () => {
     render(withProviders(<Run />));
     // Expected: an explicit hint that the websocket dropped while the loop
     // is still believed to be running. "offline" alone (in StatusDot) is

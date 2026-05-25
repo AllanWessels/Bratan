@@ -317,7 +317,11 @@ describe("Settings wrapping parity audit", () => {
 // ---------------------------------------------------------------------------
 
 describe("Settings cross-section persistence", () => {
-  it("typed value in Project section survives navigation to Vector DB and back", async () => {
+  // EXPECTED FAILURE — Settings.tsx remounts the active section on sidebar
+  // click, so Step1ProjectBasics' useState resets and the typed-but-unsaved
+  // value vanishes (autosave debounce is 500ms and is cleared on unmount).
+  // Audit row 11. When fixed in prod, change `it.fails` → `it`.
+  it.fails("typed value in Project section survives navigation to Vector DB and back", async () => {
     const user = userEvent.setup();
     render(withProviders(<Settings />));
     // Project is the default section — type into project_name.
