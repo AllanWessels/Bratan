@@ -134,12 +134,16 @@ export function CaseWizard() {
     setDraft((d) => ({ ...d, passages: d.passages.filter((s) => !sameRef(s, p)) }));
 
   const canSave = useMemo(() => {
-    if (!validate.data) return false;
-    if (!validate.data.passages_in_top_k) return false;
-    if (!validate.data.answer_text_in_passages) return false;
+    // Gate ONLY on required-field presence. The validation panel's
+    // passages_in_top_k / answer_text_in_passages are INFORMATIONAL — gating
+    // Save on them would refuse the adversarial cases the red-team loop is
+    // meant to capture (hard-to-retrieve, yes/no answers, paraphrases).
+    if (!draft.question.trim()) return false;
+    if (!draft.ground_truth.trim()) return false;
+    if (draft.passages.length === 0) return false;
     if (!draft.failure_category) return false;
     return true;
-  }, [validate.data, draft.failure_category]);
+  }, [draft.question, draft.ground_truth, draft.passages, draft.failure_category]);
 
   const onSave = async () => {
     if (!canSave || draft.failure_category === "") return;

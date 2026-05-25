@@ -1,4 +1,4 @@
-import { CheckCircle2, XCircle, AlertCircle, Sparkles } from "lucide-react";
+import { CheckCircle2, AlertCircle, Info, Sparkles, Zap } from "lucide-react";
 import { Card } from "@/components/Card";
 import { Spinner } from "@/components/Spinner";
 import type { SeedValidateResponse } from "@/api/types";
@@ -13,6 +13,48 @@ interface ValidationPanelProps {
   onToggleRunPipeline: (v: boolean) => void;
 }
 
+type Difficulty = "easy" | "hard" | "inference" | "adversarial";
+
+function classify(result: SeedValidateResponse): {
+  difficulty: Difficulty;
+  badge: string;
+  hint: string;
+  tone: "emerald" | "indigo" | "amber";
+} {
+  const retrievable = result.passages_in_top_k;
+  const verbatim = result.answer_text_in_passages;
+  if (retrievable && verbatim) {
+    return {
+      difficulty: "easy",
+      badge: "Easy case",
+      hint: "Current pipeline retrieves your passage in the top-5 and the answer text appears verbatim. Useful as an anchor case.",
+      tone: "emerald",
+    };
+  }
+  if (!retrievable && !verbatim) {
+    return {
+      difficulty: "adversarial",
+      badge: "Hard case (adversarial)",
+      hint: "Current pipeline doesn't retrieve your passage and the answer requires inference. This is exactly the kind of case the red-team / blue-team loop is meant to capture.",
+      tone: "indigo",
+    };
+  }
+  if (!retrievable) {
+    return {
+      difficulty: "hard",
+      badge: "Hard case",
+      hint: "Current pipeline doesn't retrieve your passage in the top-5 — good adversarial material for the loop.",
+      tone: "indigo",
+    };
+  }
+  return {
+    difficulty: "inference",
+    badge: "Inference case",
+    hint: "Pipeline retrieves the right passage, but the answer is paraphrased or inferred (yes/no, summary, etc.) rather than a verbatim quote. Common and saveable.",
+    tone: "amber",
+  };
+}
+
 export function ValidationPanel({
   result,
   isLoading,
@@ -24,7 +66,7 @@ export function ValidationPanel({
   return (
     <Card
       title="Validation"
-      description="Both checks must pass before you can save the case."
+      description="Informational signals about this case. The Save button gates only on required fields."
     >
       {isLoading ? (
         <div className="flex items-center gap-2 text-sm text-slate-500">
@@ -37,54 +79,89 @@ export function ValidationPanel({
         </div>
       ) : !result ? (
         <p className="text-sm text-slate-500">
-          Add a question, passages, and ground-truth answer to run validation.
+          Add a question, passages, and ground-truth answer to see signals about this case.
         </p>
       ) : (
-        <div className="flex flex-col gap-3" data-testid="validation-result" data-valid={result.passages_in_top_k && result.answer_text_in_passages ? "true" : "false"}>
-          <ValidationRow
-            ok={result.passages_in_top_k}
-            label="Passages retrievable in top-5"
-            detail={`${result.top_k_match_count} of ${result.top_k_searched} selected passages found`}
-          />
-          <ValidationRow
-            ok={result.answer_text_in_passages}
-            label="Answer text appears in selected passages"
-            detail={
-              result.answer_text_in_passages
-                ? "Substring match confirmed"
-                : "Answer text not found verbatim in any selected passage"
-            }
-          />
-
-          {result.warnings.length > 0 && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
-              <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-amber-800">
-                <AlertCircle className="h-3.5 w-3.5" /> Warnings
+        (() => {
+          const c = classify(result);
+          const toneClasses: Record<typeof c.tone, string> = {
+            emerald: "border-emerald-200 bg-emerald-50 text-emerald-900",
+            indigo: "border-indigo-200 bg-indigo-50 text-indigo-900",
+            amber: "border-amber-200 bg-amber-50 text-amber-900",
+          };
+          return (
+            <div
+              className="flex flex-col gap-3"
+              data-testid="validation-result"
+              data-difficulty={c.difficulty}
+            >
+              <div
+                className={cn(
+                  "flex items-start gap-2 rounded-xl border p-3",
+                  toneClasses[c.tone],
+                )}
+                data-testid="validation-difficulty-badge"
+              >
+                <Zap className="mt-0.5 h-4 w-4 shrink-0" />
+                <div>
+                  <p className="text-sm font-semibold">{c.badge}</p>
+                  <p className="mt-1 text-xs">{c.hint}</p>
+                </div>
               </div>
-              <ul className="ml-5 list-disc text-xs text-amber-800">
-                {result.warnings.map((w, i) => (
-                  <li key={i}>{w}</li>
-                ))}
-              </ul>
-            </div>
-          )}
 
-          {result.pipeline_score != null && (
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-              <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-slate-700">
-                <Sparkles className="h-3.5 w-3.5" /> Pipeline run
-              </div>
-              <p className="text-xs text-slate-600">
-                Score: <span className="font-mono">{result.pipeline_score.toFixed(2)}</span>
-              </p>
-              {result.pipeline_answer && (
-                <p className="mt-1 line-clamp-3 text-xs text-slate-500">
-                  {result.pipeline_answer}
-                </p>
+              <ValidationRow
+                ok={result.passages_in_top_k}
+                label="Pipeline retrieves this passage"
+                detail={
+                  result.passages_in_top_k
+                    ? `Yes — ${result.top_k_match_count} of ${result.top_k_searched} selected passages found in top-${result.top_k_searched}`
+                    : `Not in top-${result.top_k_searched} — pipeline ranked other chunks higher for this question`
+                }
+              />
+              <ValidationRow
+                ok={result.answer_text_in_passages}
+                label="Answer appears verbatim in passages"
+                detail={
+                  result.answer_text_in_passages
+                    ? "Substring match confirmed — answer is a direct quote"
+                    : "Not a verbatim match — answer is inferred or paraphrased (typical for yes/no or summary)"
+                }
+              />
+
+              {result.warnings.length > 0 && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+                  <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-amber-800">
+                    <AlertCircle className="h-3.5 w-3.5" /> Warnings
+                  </div>
+                  <ul className="ml-5 list-disc text-xs text-amber-800">
+                    {result.warnings.map((w, i) => (
+                      <li key={i}>{w}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {result.pipeline_score != null && (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-slate-700">
+                    <Sparkles className="h-3.5 w-3.5" /> Pipeline run
+                  </div>
+                  <p className="text-xs text-slate-600">
+                    Score:{" "}
+                    <span className="font-mono">
+                      {result.pipeline_score.toFixed(2)}
+                    </span>
+                  </p>
+                  {result.pipeline_answer && (
+                    <p className="mt-1 line-clamp-3 text-xs text-slate-500">
+                      {result.pipeline_answer}
+                    </p>
+                  )}
+                </div>
               )}
             </div>
-          )}
-        </div>
+          );
+        })()
       )}
 
       <label className="mt-4 flex cursor-pointer items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
@@ -117,13 +194,20 @@ function ValidationRow({ ok, label, detail }: RowProps) {
       <span
         className={cn(
           "mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full",
-          ok ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700",
+          ok
+            ? "bg-emerald-100 text-emerald-700"
+            : "bg-slate-100 text-slate-500",
         )}
       >
-        {ok ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
+        {ok ? <CheckCircle2 className="h-4 w-4" /> : <Info className="h-4 w-4" />}
       </span>
       <div>
-        <p className={cn("text-sm font-medium", ok ? "text-emerald-900" : "text-red-900")}>
+        <p
+          className={cn(
+            "text-sm font-medium",
+            ok ? "text-emerald-900" : "text-slate-700",
+          )}
+        >
           {label}
         </p>
         <p className="text-xs text-slate-500">{detail}</p>

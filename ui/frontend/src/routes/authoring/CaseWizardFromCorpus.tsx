@@ -234,17 +234,22 @@ export function CaseWizardFromCorpus() {
   ]);
 
   const canSave = useMemo(() => {
+    // Gate ONLY on the required-field set. The validation panel's
+    // passages_in_top_k / answer_text_in_passages are INFORMATIONAL signals
+    // about case difficulty, not preconditions: gating Save on them would
+    // refuse exactly the adversarial cases the red-team loop is meant to
+    // collect (hard-to-retrieve cases, yes/no answers, paraphrased answers).
     if (!draft.selectedPassage) return false;
-    if (!validate.data) return false;
-    // The "answer is in the passage" check is the real load-bearing one for
-    // this flow — the passage being in top-k is trivially true once you've
-    // picked it from the corpus, so we still gate on it but it should always
-    // pass.
-    if (!validate.data.passages_in_top_k) return false;
-    if (!validate.data.answer_text_in_passages) return false;
+    if (!draft.question.trim()) return false;
+    if (!draft.ground_truth.trim()) return false;
     if (!draft.failure_category) return false;
     return true;
-  }, [draft.selectedPassage, draft.failure_category, validate.data]);
+  }, [
+    draft.selectedPassage,
+    draft.question,
+    draft.ground_truth,
+    draft.failure_category,
+  ]);
 
   const onSelectFile = (path: string) => {
     setDraft((d) => ({ ...d, selectedFile: path, selectedPassage: null }));
