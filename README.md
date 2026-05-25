@@ -1,6 +1,6 @@
 # Bratan — Self-Improving RAG That Actually Gets Better
 
-> **A RAG only keeps getting better because it's a closed loop,
+> **A RAG is a closed loop,
 > between the thing that breaks it, the thing that fixes it, and the thing
 > that scores it.** Bratan is the workspace where that loop runs.
 
