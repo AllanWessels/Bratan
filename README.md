@@ -1,10 +1,10 @@
 # Bratan — Self-Improving RAG That Actually Gets Better
 
-> **A RAG only keeps getting better when there's a closed feedback loop
+> **A RAG only keeps getting better because it's a closed loop,
 > between the thing that breaks it, the thing that fixes it, and the thing
 > that scores it.** Bratan is the workspace where that loop runs.
 
-Bratan (Russian: *брат* — *brother*) is a self-improving Retrieval-Augmented
+Bratan is a self-improving Retrieval-Augmented
 Generation framework built on an adversarial three-agent loop:
 **Red Team** breaks the pipeline. **Blue Team** fixes it. **Judge** keeps the
 score. They iterate against a co-evolving test set until your RAG converges
@@ -467,11 +467,6 @@ Every report under `/reports/run-<ts>.json` contains:
 ---
 
 ## Cost
-
-With the default stack — local BGE embedder + local BGE reranker + local
-Qwen-14B prejudge + Sonnet 4 oracle — expect **$0.50–$2 per iteration**
-at *N=50* cases once the response cache warms up.
-
 `bratan.config.yaml` exposes `usd_per_run` and `tokens_per_iteration` as
 hard ceilings; the loop aborts with `stop_reason: budget` when hit.
 
