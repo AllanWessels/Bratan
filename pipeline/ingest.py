@@ -288,11 +288,14 @@ def start_ingest_task(cfg: BratanConfig) -> IngestStatus:
             "--task-id",
             task_id,
         ]
-        # We must launch from the project root so `scripts.ingest_worker`
-        # is importable. The repo root is two parents above this file.
-        project_root = Path(
-            os.environ.get("BRATAN_PROJECT_ROOT", Path(__file__).resolve().parents[1])
-        )
+        # Always derive the worker-spawn root from __file__. NOT
+        # BRATAN_PROJECT_ROOT — that's a *data* path (where bratan.config.yaml
+        # and `.chroma/` live), which tests set to a tmp dir with no
+        # `scripts/` directory. Same lesson as the chroma `_project_root`
+        # fix in 703af35: code-root and data-root are two different things
+        # and conflating them breaks `python -m scripts.ingest_worker` with
+        # ModuleNotFoundError under pytest.
+        project_root = Path(__file__).resolve().parents[1]
         # Scrub BRATAN_CHROMA_SUBPROCESS_QUERY from the child env. The uvicorn
         # parent sets it for read-path isolation; the ingest worker is the
         # *write* path and needs the direct in-process chromadb client. If

@@ -129,13 +129,13 @@ def drop_in_process_clients() -> bool:
         try:
             adapter._collection = None
             if adapter._client is not None:
-                try:
-                    # reset() needs allow_reset=True; we set it in _connect.
-                    adapter._client.reset()
-                except Exception as exc:
-                    logger.debug(
-                        "client.reset() in drop_in_process_clients raised: %s", exc
-                    )
+                # NOTE: do NOT call `adapter._client.reset()` here. reset() is
+                # destructive — it wipes every collection on disk. The reset
+                # endpoint removes `.chroma/` from disk BEFORE calling this
+                # function, so it didn't notice; but anyone else calling
+                # drop_in_process_clients() (tests that ingest, then want a
+                # fresh subprocess-mode read; future "rotate the client"
+                # callers) would silently lose their data. Drop the ref only.
                 adapter._client = None
                 cleared_any = True
         finally:
