@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import yaml from "js-yaml";
-import { resetBratanState } from "./helpers";
+import { resetBratanState, ensureCorpusHasContent, cleanupCorpusFixture } from "./helpers";
 
 /**
  * Wizard-walk verifier — drives ALL 8 setup-wizard steps in a real browser
@@ -75,6 +75,10 @@ async function awaitSaveStep(page: Page, step: number, timeout = 10_000): Promis
     });
 }
 
+// Track whether THIS spec dropped the CI fixture file (vs. dev having
+// their own corpus), so afterAll only cleans up what we created.
+let weDroppedCorpusFixture = false;
+
 test.beforeAll(() => {
   // Hard reset all state the wizard can touch. Spawning via shell keeps the
   // assertion logic readable and matches how the user's harness wipes state.
@@ -91,6 +95,14 @@ test.beforeAll(() => {
         .join(" "),
     { stdio: "inherit" },
   );
+  // The authoring follow-on needs an extractable corpus file. Dev machines
+  // typically have real PDFs in corpus/ (gitignored); CI doesn't. Drop a
+  // tiny markdown fixture only if the corpus has no usable content.
+  weDroppedCorpusFixture = ensureCorpusHasContent();
+});
+
+test.afterAll(() => {
+  if (weDroppedCorpusFixture) cleanupCorpusFixture();
 });
 
 test("wizard-walk: drives all 8 steps end-to-end and persists to YAML", async ({ page }) => {

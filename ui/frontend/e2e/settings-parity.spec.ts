@@ -14,6 +14,14 @@ import { test, expect, type Page } from "@playwright/test";
 
 test.use({ baseURL: "http://127.0.0.1:5173" });
 
+// Ad-hoc verifier: targets the live vite dev server on 5173 which the
+// default playwright.config.ts doesn't spawn (it runs preview on 4173).
+// Skip in CI; run locally with dev up.
+test.skip(
+  !!process.env.CI,
+  "needs vite dev on 5173; CI runs preview on 4173",
+);
+
 const API = "http://127.0.0.1:8000";
 
 interface BratanConfig {

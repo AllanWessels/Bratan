@@ -47,7 +47,7 @@ test.afterEach(() => {
   env?.cleanup();
 });
 
-test("uningested corpus — Save button is disabled and the user can tell why", async ({
+test("uningested corpus — difficulty badge flags hard case but Save still works", async ({
   page,
 }) => {
   // Collect console errors so an unhandled exception in the React tree shows
@@ -111,23 +111,26 @@ test("uningested corpus — Save button is disabled and the user can tell why", 
     { timeout: 15_000 },
   );
 
-  // The validation result block renders with `data-valid="false"` because
-  // top-k matched 0 passages. Wait for it to appear so the subsequent
-  // assertions aren't racing the spinner.
+  // Post-5ba5d55: ValidationPanel uses `data-difficulty` (enum:
+  // easy | hard | inference | adversarial) instead of `data-valid` (bool).
+  // With an empty chroma, both signals fail → "adversarial" (hard case).
   const validationResult = page.getByTestId("validation-result");
   await expect(validationResult).toBeVisible({ timeout: 10_000 });
-  await expect(validationResult).toHaveAttribute("data-valid", "false");
+  await expect(validationResult).toHaveAttribute(
+    "data-difficulty",
+    /adversarial|hard/,
+  );
 
-  // Passages-in-top-5 row must be the FAILED variant. The component renders
-  // a red-tinted icon + "Passages retrievable in top-5" label only when the
-  // check fails — match by accessible text near the failure detail.
-  const top5Row = validationResult.locator("text=/Passages retrievable in top-5/i");
-  await expect(top5Row).toBeVisible();
-  // The matching-count detail says "0 of 5 selected passages found" when
-  // chroma is empty; assert on the leading "0" so a future top_k bump
-  // doesn't break this test.
+  // The difficulty badge must clearly signal this is a hard / adversarial
+  // case so the SME knows what they're authoring.
+  const badge = page.getByTestId("validation-difficulty-badge");
+  await expect(badge).toBeVisible();
+  await expect(badge).toContainText(/Hard case|adversarial/i);
+
+  // Post-5ba5d55 retrieval-row detail copy: when retrieval fails it reads
+  // "Not in top-N — pipeline ranked other chunks higher for this question".
   await expect(
-    validationResult.locator("text=/0 of \\d+ selected passages found/i"),
+    validationResult.locator("text=/Not in top-\\d+/i"),
   ).toBeVisible();
 
   // The warnings block surfaces backend-side context — for the empty-chroma
@@ -141,30 +144,13 @@ test("uningested corpus — Save button is disabled and the user can tell why", 
     /database error|not ingested|no chunks found|run ingest|vector store is empty/i,
   );
 
-  // The Save button must be disabled. Match by accessible name, not by
-  // testid, because the user reads the label "Save case" — that's the
-  // contract that matters.
+  // Post-5ba5d55: Save is NO LONGER gated on validation signals — they're
+  // informational. Since the user filled all 4 required fields (question,
+  // ground truth, anchored passage, category), Save IS enabled. The user
+  // is informed via the difficulty badge above that this is a hard case
+  // worth saving as adversarial material.
   const saveButton = page.getByRole("button", { name: /save case/i });
-  await expect(saveButton).toBeDisabled();
-
-  // The disabled tooltip / aria-describedby must explain WHY in human terms.
-  // "Validation failed" alone is not enough — the user needs a hint about
-  // ingest. We accept either a `title` attribute or `aria-describedby`
-  // pointing at an element containing the explanation.
-  const saveTitle = await saveButton.getAttribute("title");
-  const ariaDescribedBy = await saveButton.getAttribute("aria-describedby");
-  let describedByText = "";
-  if (ariaDescribedBy) {
-    const describedEl = page.locator(`#${ariaDescribedBy}`);
-    if ((await describedEl.count()) > 0) {
-      describedByText = (await describedEl.first().textContent()) ?? "";
-    }
-  }
-  const explanationText = `${saveTitle ?? ""} ${describedByText}`.toLowerCase();
-  expect(
-    explanationText,
-    "Save button must explain why it is disabled in human terms (mentioning ingest, validation, passage, or anchor — not a generic 'invalid').",
-  ).toMatch(/ingest|passage|anchor|validation|retriev|category/);
+  await expect(saveButton).not.toBeDisabled();
 
   // The page must NOT show an unhandled-error overlay. Vite/React renders one
   // with role="alert" and the words "Uncaught" or "Error" when a render
