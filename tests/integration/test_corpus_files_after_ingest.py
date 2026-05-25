@@ -33,7 +33,6 @@ import yaml
 
 from ui.backend.schemas import BratanConfig, ProjectBasics, VectorDBConfig
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

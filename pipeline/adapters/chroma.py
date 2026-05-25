@@ -104,7 +104,7 @@ def _refuse_project_default_under_pytest(path: Path) -> None:
 # PersistentClient is the resource we care about pinning, and we want
 # explicit lifecycle: ChromaAdapter.__init__ adds, drop_in_process_clients
 # removes.
-_LIVE_ADAPTERS: "set[ChromaAdapter]" = set()
+_LIVE_ADAPTERS: set[ChromaAdapter] = set()
 
 
 def drop_in_process_clients() -> bool:

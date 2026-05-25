@@ -502,7 +502,7 @@ def system_vllm_status() -> VLLMStatus:
 @app.post("/api/system/reset-vector-store", response_model=SystemResetResponse)
 def system_reset_vector_store(
     confirm: bool = False,
-    body: dict | None = Body(default=None),
+    body: dict | None = Body(default=None),  # noqa: B008  — FastAPI requires Body() in defaults to recognize the param as a JSON body; the rule is wrong for this idiom.
 ) -> SystemResetResponse:
     """Wipe the configured `.chroma/` directory + drop in-process chroma refs.
 
