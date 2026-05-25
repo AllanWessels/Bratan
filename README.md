@@ -485,6 +485,69 @@ optional — the setup wizard lets you flip each one to API.
 
 ---
 
+## Testing posture
+
+Bratan ships with **~700 automated tests** across three layers, all gated
+by CI on every PR.
+
+| Layer | Tool | Tests | Files | LOC |
+|---|---|---|---|---|
+| Backend integration + unit | `pytest` | **260** | 25 | 5,783 |
+| Frontend unit / actuation | `vitest` + Testing Library | **425** | 53 | 10,233 |
+| Frontend end-to-end | `Playwright` (Chromium) | **15** | 9 | 1,759 |
+| **Total** | — | **~700** | 87 | **17,775** |
+
+For reference, production code is **13,765 LOC** (6,656 Python + 7,109
+TypeScript), so the test:production line-count ratio is **~1.3 : 1** —
+there's slightly more test code than production code.
+
+### What the tests actually exercise
+
+- **Cross-query invalidation tests** with a real `QueryClient` + stubbed
+  HTTP layer — catches the "ingest succeeds but the UI still shows 'not
+  ingested'" class of bug that mocked-hook unit tests structurally
+  cannot see.
+- **Observable persistence tests** that drive the same code path the
+  user drives, no mocks at the layer where the bug lives. The regression
+  test for the chroma chunk-count bug ingests a fixture corpus through
+  the real subprocess worker, then calls `list_corpus()`, then asserts
+  `ingested: true` — round-trip, no shortcuts.
+- **Subprocess isolation tests** that exercise `BRATAN_CHROMA_SUBPROCESS_QUERY=1`
+  mode explicitly and verify the worker resolves `scripts.query_worker`
+  under pytest (where `BRATAN_PROJECT_ROOT` is a tmpdir).
+- **Pytest isolation guards** — a session-wide autouse fixture
+  fingerprints `./.chroma/chroma.sqlite3` at test start and FAILS any
+  test that mutates it, plus a production-code guard refuses to open the
+  default `.chroma` path when `PYTEST_CURRENT_TEST` is set. This stops
+  the test suite from silently corrupting state across sessions.
+- **Real-error paths** — tests assert the *verbatim error string* the
+  user sees ("the tenant 'corpus' does not exist") rather than a
+  generic "validation failed" stub. The errors users hit are the errors
+  the tests check.
+- **Pre-handoff 11-item checklist** — every state-changing session ends
+  with a numbered checklist of real `curl` / `ls` commands proving the
+  app is in a clean state before handing off. Documented in `CLAUDE.md`.
+
+### Open prod gaps the tests intentionally reveal
+
+Four `it.fails()` tests in `vitest` document real prod bugs the audit
+surfaced but the team hasn't fixed yet — they're known-failing-on-purpose
+so they don't slip back into "we forgot about that":
+
+| Failing test | Prod gap |
+|---|---|
+| `Authoring.modetab.test.tsx` (×2) | Mode-tab switch silently drops in-flight drafts |
+| `Run.reconnect.test.tsx` | No reconnect indicator when websocket drops mid-loop |
+| `Settings.test.tsx` cross-section persistence | Sidebar nav drops typed-but-unsaved field values |
+
+When each gets fixed in prod, flip `it.fails` → `it` and the test
+becomes a regression guard automatically.
+
+See `docs/ui-coverage-audit-2026-05-24.md` for the full coverage matrix
+(481 lines) that drove this testing work.
+
+---
+
 ## What Bratan deliberately does *not* do
 
 - **No fine-tuning.** Every improvement happens at the prompt,
@@ -519,6 +582,45 @@ this three ways:
 
 If drift persists across three checks, the loop halts with
 `stop_reason: judge_drift`. The system tells you to look.
+
+---
+
+## How Bratan was built — collaboration skills
+
+Bratan was built across a long pair-programming session with Claude. The
+assistant accumulated a set of **meta-skills** along the way — patterns
+for collaborating on hard codebases — that are NOT RAG techniques and
+NOT specific to Bratan. They live at [`docs/build-skills/`](docs/build-skills/)
+as a snapshot, and at `~/.claude/skills/` as the live source for the
+human's other projects.
+
+Distinct from [`/skills/`](skills/) (which captures the RAG techniques
+the red and blue teams use *inside* the loop), these 10 skills capture
+how the **outside** of the loop was built without slipping into
+"works on my machine" or whack-a-mole bug fixing:
+
+| Skill | What it captures |
+|---|---|
+| [`parallel-fanout-verification`](docs/build-skills/parallel-fanout-verification/SKILL.md) | Dispatch test layers + independent fixes as parallel sub-agents |
+| [`fix-first-then-test`](docs/build-skills/fix-first-then-test/SKILL.md) | Harness is verifier, not debugger — land fixes before running |
+| [`verifier-state-vs-user-state`](docs/build-skills/verifier-state-vs-user-state/SKILL.md) | Process-restart + round-trip after every verifier run |
+| [`subprocess-isolation-for-process-state-clients`](docs/build-skills/subprocess-isolation-for-process-state-clients/SKILL.md) | Both read AND write through subprocess for chromadb-class clients |
+| [`observable-outcome-tests-over-mocks`](docs/build-skills/observable-outcome-tests-over-mocks/SKILL.md) | Assert visible state changes, not call counts |
+| [`pre-handoff-clean-state-proof`](docs/build-skills/pre-handoff-clean-state-proof/SKILL.md) | Numbered checklist of real commands, not "I think it's clean" |
+| [`audit-then-fanout-fix`](docs/build-skills/audit-then-fanout-fix/SKILL.md) | Coverage matrix → fan-out one fix agent per gap class |
+| [`agent-model-selection`](docs/build-skills/agent-model-selection/SKILL.md) | Pass `model:` explicitly on every Agent dispatch |
+| [`api-rewrite-sweep`](docs/build-skills/api-rewrite-sweep/SKILL.md) | An API-change commit MUST sweep every consumer test in the same commit |
+| [`ci-vs-dev-environment-parity`](docs/build-skills/ci-vs-dev-environment-parity/SKILL.md) | "Works on my machine" has 3 predictable origins: gitignored fixtures, dev-only ports, dev-only env vars |
+
+The last two emerged from the post-merge CI loop — every push found a
+new way for the local environment to lie about what CI would actually
+do. Each skill names the failure mode, the concrete fix recipe, and
+the anti-patterns the rule exists to prevent.
+
+These are not aspirational. The 4 top-level `⚡ OPERATING PRINCIPLE`
+blocks at the top of `CLAUDE.md` are the load-bearing four, encoded as
+hard rules because each one was learned the painful way during this
+build.
 
 ---
 
